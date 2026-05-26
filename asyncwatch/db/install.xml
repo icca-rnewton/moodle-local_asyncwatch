@@ -1,0 +1,175 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<XMLDB PATH="local/asyncwatch/db" VERSION="20260515" COMMENT="AsyncWatch plugin tables"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:noNamespaceSchemaLocation="../../../lib/xmldb/xmldb.xsd">
+  <TABLES>
+
+    <TABLE NAME="asyncwatch_parts" COMMENT="Logical parts defined for a course">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="courseid" TYPE="int" LENGTH="10" NOTNULL="true"/>
+        <FIELD NAME="name" TYPE="char" LENGTH="255" NOTNULL="true"/>
+        <FIELD NAME="sortorder" TYPE="int" LENGTH="4" NOTNULL="true" DEFAULT="0"/>
+        <FIELD NAME="is_auto" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="0" COMMENT="1 = auto-generated part"/>
+        <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"/>
+        <FIELD NAME="timemodified" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+        <KEY NAME="fk_course" TYPE="foreign" FIELDS="courseid" REFTABLE="course" REFFIELDS="id"/>
+      </KEYS>
+      <INDEXES>
+        <INDEX NAME="idx_course" UNIQUE="false" FIELDS="courseid"/>
+      </INDEXES>
+    </TABLE>
+
+    <TABLE NAME="asyncwatch_part_activities" COMMENT="Activities assigned to each part">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="partid" TYPE="int" LENGTH="10" NOTNULL="true"/>
+        <FIELD NAME="cmid" TYPE="int" LENGTH="10" NOTNULL="true"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+        <KEY NAME="fk_part" TYPE="foreign" FIELDS="partid" REFTABLE="asyncwatch_parts" REFFIELDS="id"/>
+        <KEY NAME="fk_cm" TYPE="foreign" FIELDS="cmid" REFTABLE="course_modules" REFFIELDS="id"/>
+      </KEYS>
+      <INDEXES>
+        <INDEX NAME="idx_part" UNIQUE="false" FIELDS="partid"/>
+        <INDEX NAME="uniq_partcm" UNIQUE="true" FIELDS="partid,cmid"/>
+      </INDEXES>
+    </TABLE>
+
+    <TABLE NAME="asyncwatch_rules" COMMENT="Completion threshold rules for a course">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="courseid" TYPE="int" LENGTH="10" NOTNULL="true"/>
+        <FIELD NAME="name" TYPE="char" LENGTH="255" NOTNULL="true"/>
+        <FIELD NAME="parts_required" TYPE="int" LENGTH="4" NOTNULL="true"/>
+        <FIELD NAME="deadline" TYPE="int" LENGTH="10" NOTNULL="true"/>
+        <FIELD NAME="warn_hours" TYPE="int" LENGTH="6" NOTNULL="false" DEFAULT="0"/>
+        <FIELD NAME="enabled" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="1"/>
+        <FIELD NAME="notify_enabled" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="0" COMMENT="Legacy: replaced by granular columns below"/>
+        <FIELD NAME="notify_learner_breach" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="0"/>
+        <FIELD NAME="notify_staff_breach" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="0"/>
+        <FIELD NAME="notify_learner_warning" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="0"/>
+        <FIELD NAME="notify_staff_warning" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="0"/>
+        <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"/>
+        <FIELD NAME="timemodified" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+        <KEY NAME="fk_course" TYPE="foreign" FIELDS="courseid" REFTABLE="course" REFFIELDS="id"/>
+      </KEYS>
+      <INDEXES>
+        <INDEX NAME="idx_course" UNIQUE="false" FIELDS="courseid"/>
+        <INDEX NAME="idx_enabled" UNIQUE="false" FIELDS="courseid,enabled"/>
+      </INDEXES>
+    </TABLE>
+
+    <TABLE NAME="asyncwatch_notifications" COMMENT="Log of notifications dispatched">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="ruleid" TYPE="int" LENGTH="10" NOTNULL="true"/>
+        <FIELD NAME="userid" TYPE="int" LENGTH="10" NOTNULL="true"/>
+        <FIELD NAME="type" TYPE="char" LENGTH="20" NOTNULL="true"/>
+        <FIELD NAME="timesent" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+        <KEY NAME="fk_rule" TYPE="foreign" FIELDS="ruleid" REFTABLE="asyncwatch_rules" REFFIELDS="id"/>
+        <KEY NAME="fk_user" TYPE="foreign" FIELDS="userid" REFTABLE="user" REFFIELDS="id"/>
+      </KEYS>
+      <INDEXES>
+        <INDEX NAME="idx_rule_user_type" UNIQUE="false" FIELDS="ruleid,userid,type"/>
+      </INDEXES>
+    </TABLE>
+
+    <!-- ================================================================
+         asyncwatch_ntpl  (notification templates)
+         One row per course. Stores both learner and staff email templates
+         plus recipient configuration as JSON.
+    ================================================================ -->
+    <TABLE NAME="asyncwatch_ntpl" COMMENT="Email notification templates per course">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="courseid" TYPE="int" LENGTH="10" NOTNULL="true"/>
+        <FIELD NAME="learner_subject" TYPE="char" LENGTH="255" NOTNULL="false" DEFAULT=""/>
+        <FIELD NAME="learner_body" TYPE="text" NOTNULL="false"/>
+        <FIELD NAME="staff_subject" TYPE="char" LENGTH="255" NOTNULL="false" DEFAULT=""/>
+        <FIELD NAME="staff_body" TYPE="text" NOTNULL="false"/>
+        <FIELD NAME="staff_recipients" TYPE="text" NOTNULL="false" COMMENT="JSON: {roles:[],cohorts:[],userids:[]}"/>
+        <FIELD NAME="learner_warning_subject" TYPE="char" LENGTH="255" NOTNULL="false" DEFAULT=""/>
+        <FIELD NAME="learner_warning_body" TYPE="text" NOTNULL="false"/>
+        <FIELD NAME="staff_warning_subject" TYPE="char" LENGTH="255" NOTNULL="false" DEFAULT=""/>
+        <FIELD NAME="staff_warning_body" TYPE="text" NOTNULL="false"/>
+        <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"/>
+        <FIELD NAME="timemodified" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+        <KEY NAME="fk_course" TYPE="foreign" FIELDS="courseid" REFTABLE="course" REFFIELDS="id"/>
+      </KEYS>
+    </TABLE>
+
+
+    <TABLE NAME="asyncwatch_rule_sets" COMMENT="Named rule sets per course">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="courseid" TYPE="int" LENGTH="10" NOTNULL="true"/>
+        <FIELD NAME="name" TYPE="char" LENGTH="255" NOTNULL="true"/>
+        <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"/>
+        <FIELD NAME="timemodified" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+        <KEY NAME="fk_course" TYPE="foreign" FIELDS="courseid" REFTABLE="course" REFFIELDS="id"/>
+      </KEYS>
+    </TABLE>
+
+    <TABLE NAME="asyncwatch_ruleset_rules" COMMENT="Rules belonging to a rule set">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="rulesetid" TYPE="int" LENGTH="10" NOTNULL="true"/>
+        <FIELD NAME="ruleid" TYPE="int" LENGTH="10" NOTNULL="true"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+        <KEY NAME="fk_ruleset" TYPE="foreign" FIELDS="rulesetid" REFTABLE="asyncwatch_rule_sets" REFFIELDS="id"/>
+        <KEY NAME="fk_rule" TYPE="foreign" FIELDS="ruleid" REFTABLE="asyncwatch_rules" REFFIELDS="id"/>
+      </KEYS>
+    </TABLE>
+
+    <TABLE NAME="asyncwatch_ruleset_groups" COMMENT="Course groups assigned to a rule set">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="rulesetid" TYPE="int" LENGTH="10" NOTNULL="true"/>
+        <FIELD NAME="groupid" TYPE="int" LENGTH="10" NOTNULL="true"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+        <KEY NAME="fk_ruleset" TYPE="foreign" FIELDS="rulesetid" REFTABLE="asyncwatch_rule_sets" REFFIELDS="id"/>
+        <KEY NAME="fk_group" TYPE="foreign" FIELDS="groupid" REFTABLE="groups" REFFIELDS="id"/>
+      </KEYS>
+    </TABLE>
+
+
+    <TABLE NAME="asyncwatch_rule_overrides" COMMENT="Per-group deadline overrides for a rule">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="ruleid" TYPE="int" LENGTH="10" NOTNULL="true"/>
+        <FIELD NAME="groupid" TYPE="int" LENGTH="10" NOTNULL="true"/>
+        <FIELD NAME="deadline" TYPE="int" LENGTH="10" NOTNULL="true"/>
+        <FIELD NAME="warn_hours" TYPE="int" LENGTH="10" NOTNULL="false" DEFAULT="0"/>
+        <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"/>
+        <FIELD NAME="timemodified" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+        <KEY NAME="fk_rule" TYPE="foreign" FIELDS="ruleid" REFTABLE="asyncwatch_rules" REFFIELDS="id"/>
+        <KEY NAME="fk_group" TYPE="foreign" FIELDS="groupid" REFTABLE="groups" REFFIELDS="id"/>
+      </KEYS>
+    </TABLE>
+
+  </TABLES>
+</XMLDB>

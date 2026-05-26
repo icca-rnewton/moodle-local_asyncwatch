@@ -1,0 +1,1093 @@
+<?php
+/**
+ * Core helper: data access and progress calculation.
+ *
+ * @package    local_asyncwatch
+ * @copyright 2026 Inns of Court College of Advocacy (Part of COIC)
+ * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
+ */
+
+namespace local_asyncwatch;
+
+defined('MOODLE_INTERNAL') || die();
+
+/**
+ * Central helper class for AsyncWatch operations.
+ */
+class helper {
+
+    // -------------------------------------------------------------------------
+    // PARTS
+    // -------------------------------------------------------------------------
+
+    /**
+     * Return all parts for a course, ordered by sortorder.
+     *
+     * @param int $courseid
+     * @return array of stdClass records
+     */
+    public static function get_parts(int $courseid): array {
+        global $DB;
+        return $DB->get_records('asyncwatch_parts', ['courseid' => $courseid], 'sortorder ASC');
+    }
+
+    /**
+     * Return a single part record.
+     */
+    public static function get_part(int $partid): \stdClass {
+        global $DB;
+        return $DB->get_record('asyncwatch_parts', ['id' => $partid], '*', MUST_EXIST);
+    }
+
+    /**
+     * Save (insert or update) a part.
+     *
+     * @param stdClass $data  Must have courseid, name, sortorder. Optional id for update.
+     * @return int  The part id.
+     */
+    public static function save_part(\stdClass $data): int {
+        global $DB;
+        $now = time();
+        if (!empty($data->id)) {
+            $data->timemodified = $now;
+            $DB->update_record('asyncwatch_parts', $data);
+            return (int)$data->id;
+        }
+        $data->timecreated  = $now;
+        $data->timemodified = $now;
+        return (int)$DB->insert_record('asyncwatch_parts', $data);
+    }
+
+    /**
+     * Delete a part and all its activity assignments.
+     */
+    public static function delete_part(int $partid): void {
+        global $DB;
+        $DB->delete_records('asyncwatch_part_activities', ['partid' => $partid]);
+        $DB->delete_records('asyncwatch_parts', ['id' => $partid]);
+    }
+
+    // -------------------------------------------------------------------------
+    // ACTIVITIES WITHIN PARTS
+    // -------------------------------------------------------------------------
+
+    /**
+     * Return all cm ids assigned to a part.
+     *
+     * @param int $partid
+     * @return int[]
+     */
+    public static function get_part_cmids(int $partid): array {
+        global $DB;
+        $rows = $DB->get_records('asyncwatch_part_activities', ['partid' => $partid], '', 'cmid');
+        return array_map('intval', array_keys($rows));
+    }
+
+    /**
+     * Replace all activity assignments for a part.
+     *
+     * @param int   $partid
+     * @param int[] $cmids
+     */
+    public static function set_part_activities(int $partid, array $cmids): void {
+        global $DB;
+        $DB->delete_records('asyncwatch_part_activities', ['partid' => $partid]);
+        foreach (array_unique($cmids) as $cmid) {
+            $row = (object)['partid' => $partid, 'cmid' => (int)$cmid];
+            $DB->insert_record('asyncwatch_part_activities', $row);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // RULES
+    // -------------------------------------------------------------------------
+
+    /**
+     * Return all rules for a course.
+     */
+    public static function get_rules(int $courseid): array {
+        global $DB;
+        return $DB->get_records('asyncwatch_rules', ['courseid' => $courseid], 'deadline ASC');
+    }
+
+    /**
+     * Save (insert or update) a rule.
+     */
+    public static function save_rule(\stdClass $data): int {
+        global $DB;
+        $now = time();
+        if (!empty($data->id)) {
+            $data->timemodified = $now;
+            $DB->update_record('asyncwatch_rules', $data);
+            return (int)$data->id;
+        }
+        $data->timecreated  = $now;
+        $data->timemodified = $now;
+        return (int)$DB->insert_record('asyncwatch_rules', $data);
+    }
+
+    /**
+     * Delete a rule and its notification log.
+     */
+    public static function delete_rule(int $ruleid): void {
+        global $DB;
+        $DB->delete_records('asyncwatch_notifications',   ['ruleid' => $ruleid]);
+        $DB->delete_records('asyncwatch_ruleset_rules',   ['ruleid' => $ruleid]);
+        $DB->delete_records('asyncwatch_rule_overrides',  ['ruleid' => $ruleid]);
+        $DB->delete_records('asyncwatch_rules',           ['id'     => $ruleid]);
+    }
+
+    // -------------------------------------------------------------------------
+    // PROGRESS CALCULATION
+    // -------------------------------------------------------------------------
+
+    /**
+     * Calculate how many parts a user has fully completed.
+     *
+     * A part is "complete" when ALL activities assigned to it have their
+     * completion state = COMPLETION_COMPLETE (1) or COMPLETION_COMPLETE_PASS (2).
+     *
+     * @param int $courseid
+     * @param int $userid
+     * @return array  ['completed' => int, 'total' => int, 'parts' => [partid => bool]]
+     */
+    public static function get_user_progress(int $courseid, int $userid): array {
+        global $DB;
+
+        $parts = self::get_parts($courseid);
+        $result = ['completed' => 0, 'total' => count($parts), 'parts' => []];
+
+        if (empty($parts)) {
+            return $result;
+        }
+
+        // Load all completion records for this user/course in one query.
+        $sql = "SELECT cmc.coursemoduleid, cmc.completionstate
+                  FROM {course_modules_completion} cmc
+                  JOIN {course_modules} cm ON cm.id = cmc.coursemoduleid
+                 WHERE cm.course = :courseid
+                   AND cmc.userid = :userid";
+        $completions = $DB->get_records_sql($sql, ['courseid' => $courseid, 'userid' => $userid]);
+        $done_cmids  = [];
+        foreach ($completions as $c) {
+            if ($c->completionstate >= 1) { // 1 = COMPLETION_COMPLETE
+                $done_cmids[(int)$c->coursemoduleid] = true;
+            }
+        }
+
+        foreach ($parts as $part) {
+            $cmids = self::get_part_cmids((int)$part->id);
+            if (empty($cmids)) {
+                // Empty part – skip (treat as incomplete so it doesn't inflate count).
+                $result['parts'][$part->id] = false;
+                continue;
+            }
+            $all_done = true;
+            foreach ($cmids as $cmid) {
+                if (empty($done_cmids[$cmid])) {
+                    $all_done = false;
+                    break;
+                }
+            }
+            $result['parts'][$part->id] = $all_done;
+            if ($all_done) {
+                $result['completed']++;
+            }
+        }
+
+        return $result;
+    }
+
+    /**
+     * Bulk version of get_user_progress — loads progress for ALL users at once.
+     * Returns [userid => ['completed'=>int, 'total'=>int, 'parts'=>[partid=>bool]]]
+     *
+     * Uses 3 queries total regardless of number of users.
+     */
+    public static function bulk_get_user_progress(int $courseid, array $userids): array {
+        global $DB;
+
+        $parts = self::get_parts($courseid);
+        $total = count($parts);
+
+        // Initialise result for all users.
+        $results = [];
+        foreach ($userids as $uid) {
+            $results[$uid] = ['completed' => 0, 'total' => $total, 'parts' => []];
+            foreach ($parts as $part) {
+                $results[$uid]['parts'][$part->id] = false;
+            }
+        }
+
+        if (empty($parts) || empty($userids)) return $results;
+
+        // Load all part→cmid mappings in one query.
+        $part_ids = array_keys($parts);
+        list($in_sql, $params) = $DB->get_in_or_equal($part_ids);
+        $part_cmids = []; // [partid => [cmid, ...]]
+        $rows = $DB->get_records_sql(
+            "SELECT pa.id, pa.partid, pa.cmid FROM {asyncwatch_part_activities} pa WHERE pa.partid $in_sql",
+            $params
+        );
+        foreach ($rows as $row) {
+            $part_cmids[(int)$row->partid][] = (int)$row->cmid;
+        }
+
+        // Load all completion records for all users in one query.
+        list($in_sql2, $params2) = $DB->get_in_or_equal($userids);
+        $params2[] = $courseid;
+        $comp_rows = $DB->get_records_sql(
+            "SELECT cmc.id, cmc.userid, cmc.coursemoduleid, cmc.completionstate
+               FROM {course_modules_completion} cmc
+               JOIN {course_modules} cm ON cm.id = cmc.coursemoduleid
+              WHERE cmc.userid $in_sql2 AND cm.course = ?",
+            $params2
+        );
+
+        // Build completion map: [userid][cmid] => true
+        $done = [];
+        foreach ($comp_rows as $row) {
+            if ((int)$row->completionstate >= 1) {
+                $done[(int)$row->userid][(int)$row->coursemoduleid] = true;
+            }
+        }
+
+        // Compute per-user per-part progress from memory.
+        foreach ($userids as $uid) {
+            $user_done = $done[$uid] ?? [];
+            foreach ($parts as $part) {
+                $cmids = $part_cmids[$part->id] ?? [];
+                if (empty($cmids)) continue;
+                $all_done = true;
+                foreach ($cmids as $cmid) {
+                    if (empty($user_done[$cmid])) { $all_done = false; break; }
+                }
+                $results[$uid]['parts'][$part->id] = $all_done;
+                if ($all_done) $results[$uid]['completed']++;
+            }
+        }
+
+        return $results;
+    }
+
+    // -------------------------------------------------------------------------
+    // ACTIVITY SELECTOR DATA
+    // -------------------------------------------------------------------------
+
+    /**
+     * Return all course modules for a course, grouped by section, with
+     * tracking-on/off flag and module type.
+     *
+     * @param int $courseid
+     * @return array  Keyed by section number, each value an array of cm objects.
+     */
+    public static function get_course_activities_by_section(int $courseid): array {
+        global $DB;
+        $modinfo  = get_fast_modinfo($courseid);
+        $all_secs = $modinfo->get_section_info_all();
+
+        // Build instance → child section map for subsections.
+        $inst_to_sec = [];
+        $subsec_ids  = [];
+        foreach ($all_secs as $sec) {
+            if (($sec->component ?? '') === 'mod_subsection' && !empty($sec->itemid)) {
+                $inst_to_sec[(int)$sec->itemid] = $sec;
+                $subsec_ids[$sec->id] = true;
+            }
+        }
+
+        // Get subsection cm instances keyed by cm id.
+        $subsec_cms = [];
+        if (!empty($subsec_ids)) {
+            $rows = $DB->get_records_sql(
+                "SELECT cm.id, cm.instance, cm.section as parent_sec_id, sub.name as subname
+                   FROM {course_modules} cm
+                   JOIN {modules} m ON m.id = cm.module AND m.name = 'subsection'
+                   JOIN {subsection} sub ON sub.id = cm.instance
+                  WHERE cm.course = :courseid AND cm.deletioninprogress = 0",
+                ['courseid' => $courseid]
+            );
+            foreach ($rows as $row) {
+                $subsec_cms[$row->id] = $row;
+            }
+        }
+
+        // Build sections_by_id for parent lookup.
+        $sections_by_id = [];
+        foreach ($all_secs as $sec) {
+            $sections_by_id[$sec->id] = $sec;
+        }
+
+        // Build structured result:
+        // [section_id => ['name'=>, 'section_num'=>, 'is_subsection'=>false,
+        //                 'parent_id'=>null, 'activities'=>[],
+        //                 'subsections'=> [sub_sec_id => ['name'=>,'activities'=>[]]]]]
+        $sections = [];
+
+        foreach ($modinfo->get_cms() as $cm) {
+            if ($cm->modname === 'subsection') continue; // container, not an activity
+            if ($cm->modname === 'label')      continue;
+            if (!$cm->uservisible && !$cm->is_visible_on_course_page()) continue;
+
+            $sec_info = $sections_by_id[$cm->section] ?? null;
+            if (!$sec_info || $sec_info->section == 0) continue;
+
+            $activity = (object)[
+                'cmid'             => (int)$cm->id,
+                'name'             => $cm->name,
+                'modname'          => $cm->modname,
+                'tracking_enabled' => ($cm->completion != 0),
+                'icon_url'         => $cm->get_icon_url()->out(false),
+            ];
+
+            if (isset($subsec_ids[$sec_info->id])) {
+                // Activity is inside a subsection — find parent section.
+                // Match via inst_to_sec: find the subsection cm whose child section = sec_info.
+                $parent_sec_id = null;
+                $subsec_name   = $sec_info->name ?: get_section_name($courseid, $sec_info->section);
+                foreach ($subsec_cms as $scm) {
+                    $child = $inst_to_sec[(int)$scm->instance] ?? null;
+                    if ($child && $child->id === $sec_info->id) {
+                        $parent_sec = $sections_by_id[$scm->parent_sec_id] ?? null;
+                        if ($parent_sec) {
+                            $parent_sec_id = $parent_sec->id;
+                            $subsec_name   = $scm->subname ?: $subsec_name;
+                        }
+                        break;
+                    }
+                }
+
+                if ($parent_sec_id) {
+                    if (!isset($sections[$parent_sec_id])) {
+                        $psec = $sections_by_id[$parent_sec_id];
+                        $sections[$parent_sec_id] = [
+                            'name'        => get_section_name($courseid, $psec->section),
+                            'section_num' => $psec->section,
+                            'activities'  => [],
+                            'subsections' => [],
+                        ];
+                    }
+                    if (!isset($sections[$parent_sec_id]['subsections'][$sec_info->id])) {
+                        $sections[$parent_sec_id]['subsections'][$sec_info->id] = [
+                            'name'       => $subsec_name,
+                            'activities' => [],
+                        ];
+                    }
+                    $sections[$parent_sec_id]['subsections'][$sec_info->id]['activities'][] = $activity;
+                    continue;
+                }
+            }
+
+            // Regular top-level section activity.
+            if (!isset($sections[$sec_info->id])) {
+                $sections[$sec_info->id] = [
+                    'name'        => get_section_name($courseid, $sec_info->section),
+                    'section_num' => $sec_info->section,
+                    'activities'  => [],
+                    'subsections' => [],
+                ];
+            }
+            $sections[$sec_info->id]['activities'][] = $activity;
+        }
+
+        // Sort by section number.
+        uasort($sections, fn($a, $b) => $a['section_num'] <=> $b['section_num']);
+
+        return $sections;
+    }
+
+    // -------------------------------------------------------------------------
+    // AUTO PARTS
+    // -------------------------------------------------------------------------
+
+    /**
+     * Detect whether a course has any formal subsections (Moodle 4.4+).
+     * Subsections are course modules with modname = 'subsection'.
+     *
+     * @param int $courseid
+     * @return bool
+     */
+    public static function course_has_subsections(int $courseid): bool {
+        global $DB;
+        return $DB->record_exists_sql(
+            "SELECT 1 FROM {course_modules} cm
+               JOIN {modules} m ON m.id = cm.module
+              WHERE cm.course = :courseid AND m.name = 'subsection'",
+            ['courseid' => $courseid]
+        );
+    }
+
+    /**
+     * Get all unique module types (modnames) used in a course,
+     * only for activities that have completion tracking enabled.
+     *
+     * @param int $courseid
+     * @return string[]  e.g. ['quiz', 'scorm', 'assign']
+     */
+    public static function get_tracked_modtypes(int $courseid): array {
+        global $DB;
+        $rows = $DB->get_records_sql(
+            "SELECT DISTINCT m.name
+               FROM {course_modules} cm
+               JOIN {modules} m ON m.id = cm.module
+              WHERE cm.course = :courseid
+                AND cm.completion != 0
+                AND cm.deletioninprogress = 0
+              ORDER BY m.name ASC",
+            ['courseid' => $courseid]
+        );
+        return array_keys($rows);
+    }
+
+    /**
+     * Build the candidate part list for auto-generation without saving anything.
+     *
+     * Returns an array of candidate parts, each with:
+     *   - name         string   Proposed part name
+     *   - cmids         int[]    Activity cm IDs to include
+     *   - skipped_cmids int[]    Activity cm IDs excluded (tracking off)
+     *   - section_id    int      Moodle section ID
+     *   - type          string   'section' | 'subsection' | 'remainder'
+     *   - skipped_count int      Activities excluded (tracking off / wrong type)
+     *   - activities    array    [['cmid'=>, 'name'=>, 'modname'=>]] for included
+     *   - skipped_acts  array    [['cmid'=>, 'name'=>, 'modname'=>]] for excluded
+     *
+     * @param int    $courseid
+     * @param string $mode         'section' | 'subsection' | 'both'
+     * @param int[]  $section_ids  Which section IDs to include (empty = all)
+     * @param string[] $modtypes   Which mod types to include (empty = all tracked)
+     * @return array
+     */
+    public static function build_auto_parts(
+        int $courseid,
+        string $mode,
+        array $section_ids,
+        array $subsection_ids,
+        array $modtypes,
+        bool $include_subsection_activities = true
+    ): array {
+        $modinfo  = get_fast_modinfo($courseid);
+        $sections = $modinfo->get_section_info_all();
+        $results  = [];
+
+        // Build a map of subsection cmid → section_info for subsection mode.
+        $subsection_modname = null;
+        foreach ($modinfo->get_cms() as $cm) {
+            if ($cm->modname === 'subsection') {
+                $subsection_modname = 'subsection';
+                break;
+            }
+        }
+
+        foreach ($sections as $section) {
+            // Skip section 0 (general/hidden area).
+            if ($section->section == 0) continue;
+
+            // Filter by selected sections if specified.
+            if (!empty($section_ids) && !in_array((int)$section->id, $section_ids)) continue;
+
+            $section_name = get_section_name($courseid, $section->section);
+
+            if ($mode === 'section') {
+                // Collect activities from this section.
+                // If include_subsection_activities is true, also collect from child subsections.
+                $candidate = self::collect_section_activities(
+                    $modinfo, $section, $modtypes, false
+                );
+                if ($include_subsection_activities) {
+                    // Also gather activities from subsections within this section.
+                    $sub_cms = self::get_subsections_in_section($modinfo, $section);
+                    // Build instance lookup map.
+                    $inst_map = [];
+                    foreach ($modinfo->get_section_info_all() as $s) {
+                        if (($s->component ?? '') === 'mod_subsection' && !empty($s->itemid)) {
+                            $inst_map[(int)$s->itemid] = $s;
+                        }
+                    }
+                    foreach ($sub_cms as $sub_cm) {
+                        $sub_s = $inst_map[(int)$sub_cm->instance] ?? null;
+                        if (!$sub_s) continue;
+                        $sub_candidate = self::collect_section_activities($modinfo, $sub_s, $modtypes, true);
+                        $candidate['cmids']         = array_merge($candidate['cmids'], $sub_candidate['cmids']);
+                        $candidate['skipped']      += $sub_candidate['skipped'];
+                        $candidate['skipped_cmids'] = array_merge($candidate['skipped_cmids'] ?? [], $sub_candidate['skipped_cmids']);
+                    }
+                }
+                if (!empty($candidate['cmids'])) {
+                    $results[] = [
+                        'name'          => '[Section] ' . $section_name,
+                        'cmids'         => $candidate['cmids'],
+                        'section_id'    => (int)$section->id,
+                        'type'          => 'section',
+                        'skipped_count' => $candidate['skipped'],
+                        'skipped_cmids' => $candidate['skipped_cmids'] ?? [],
+                    ];
+                } else {
+                    $results[] = [
+                        'name'          => '[Section] ' . $section_name,
+                        'cmids'         => [],
+                        'section_id'    => (int)$section->id,
+                        'type'          => 'section',
+                        'skipped_count' => $candidate['skipped'],
+                        'skipped_cmids' => $candidate['skipped_cmids'] ?? [],
+                        'empty'         => true,
+                    ];
+                }
+
+            } elseif ($mode === 'subsection') {
+                // One part per subsection within this section.
+                // Build sections_by_id map for this lookup.
+                $sections_by_id_local = [];
+                foreach ($modinfo->get_section_info_all() as $s) {
+                    $sections_by_id_local[$s->id] = $s;
+                    if (($s->component ?? '') === 'mod_subsection' && !empty($s->itemid)) {
+                        $sections_by_id_local['inst_' . $s->itemid] = $s;
+                    }
+                }
+                $subsections = self::get_subsections_in_section($modinfo, $section);
+                foreach ($subsections as $sub_cm) {
+                    // Find child section via instance key.
+                    $sub_section = $sections_by_id_local['inst_' . $sub_cm->instance] ?? null;
+                    $sub_section_candidate = $sub_section;
+                    if (!empty($subsection_ids) && $sub_section_candidate
+                            && !in_array((int)$sub_section_candidate->id, $subsection_ids)) {
+                        continue;
+                    }
+                    if (!$sub_section) continue;
+                    $sub_name = $sub_cm->subname ?: get_section_name($courseid, $sub_section->section);
+                    $candidate = self::collect_section_activities($modinfo, $sub_section, $modtypes, true);
+                    if (!empty($candidate['cmids'])) {
+                        $results[] = [
+                            'name'          => '[Subsection] ' . $sub_name,
+                            'cmids'         => $candidate['cmids'],
+                            'section_id'    => (int)($sub_section->id ?? 0),
+                            'type'          => 'subsection',
+                            'skipped_count' => $candidate['skipped'],
+                        'skipped_cmids' => $candidate['skipped_cmids'] ?? [],
+                        ];
+                    } else {
+                        $results[] = [
+                            'name'          => '[Subsection] ' . $sub_name,
+                            'cmids'         => [],
+                            'section_id'    => (int)($sub_section->id ?? 0),
+                            'type'          => 'subsection',
+                            'skipped_count' => $candidate['skipped'],
+                        'skipped_cmids' => $candidate['skipped_cmids'] ?? [],
+                            'empty'         => true,
+                        ];
+                    }
+                }
+
+            } elseif ($mode === 'both') {
+                // Subsections become their own parts.
+                // Build instance lookup map.
+                $inst_map_both = [];
+                foreach ($modinfo->get_section_info_all() as $s) {
+                    if (($s->component ?? '') === 'mod_subsection' && !empty($s->itemid)) {
+                        $inst_map_both[(int)$s->itemid] = $s;
+                    }
+                }
+                $subsections = self::get_subsections_in_section($modinfo, $section);
+                $sub_cmids   = [];
+                foreach ($subsections as $sub_cm) {
+                    $sub_section_candidate = $inst_map_both[(int)$sub_cm->instance] ?? null;
+                    if (!empty($subsection_ids) && $sub_section_candidate
+                            && !in_array((int)$sub_section_candidate->id, $subsection_ids)) {
+                        // Still track cmids so remainder excludes them.
+                        if ($sub_section_candidate) {
+                            $tmp = self::collect_section_activities($modinfo, $sub_section_candidate, $modtypes, true);
+                            $sub_cmids = array_merge($sub_cmids, $tmp['cmids'], $tmp['skipped_cmids']);
+                        }
+                        continue;
+                    }
+                    $sub_section = $modinfo->get_section_info_by_id($sub_cm->section ?? 0);
+                    if (!$sub_section) continue;
+                    $sub_name  = $sub_cm->subname ?: get_section_name($courseid, $sub_section->section);
+                    $candidate = self::collect_section_activities($modinfo, $sub_section, $modtypes, true);
+                    // Track subsection cm IDs so we can exclude from remainder.
+                    $sub_cmids = array_merge($sub_cmids, $candidate['cmids'], $candidate['skipped_cmids']);
+                    if (!empty($candidate['cmids'])) {
+                        $results[] = [
+                            'name'          => '[Subsection] ' . $sub_name,
+                            'cmids'         => $candidate['cmids'],
+                            'section_id'    => (int)($sub_section->id ?? 0),
+                            'type'          => 'subsection',
+                            'skipped_count' => $candidate['skipped'],
+                        'skipped_cmids' => $candidate['skipped_cmids'] ?? [],
+                        ];
+                    } else {
+                        $results[] = [
+                            'name'          => '[Subsection] ' . $sub_name,
+                            'cmids'         => [],
+                            'section_id'    => (int)($sub_section->id ?? 0),
+                            'type'          => 'subsection',
+                            'skipped_count' => $candidate['skipped'],
+                        'skipped_cmids' => $candidate['skipped_cmids'] ?? [],
+                            'empty'         => true,
+                        ];
+                    }
+                }
+
+                // Remainder = activities directly in section, not in subsections.
+                $remainder = self::collect_section_activities(
+                    $modinfo, $section, $modtypes, false, $sub_cmids
+                );
+                if (!empty($remainder['cmids'])) {
+                    $results[] = [
+                        'name'          => '[Section] ' . $section_name . ' — General',
+                        'cmids'         => $remainder['cmids'],
+                        'section_id'    => (int)$section->id,
+                        'type'          => 'remainder',
+                        'skipped_count' => $remainder['skipped'],
+                    ];
+                }
+            }
+        }
+
+        return $results;
+    }
+
+    /**
+     * Enrich auto-part candidates with activity names for the preview UI.
+     * Adds 'activities' (included) and 'skipped_acts' (excluded) arrays to each candidate.
+     */
+    public static function enrich_candidates(array $candidates, int $courseid): array {
+        $modinfo = get_fast_modinfo($courseid);
+        $cms     = $modinfo->get_cms();
+
+        foreach ($candidates as &$c) {
+            $c['activities']   = [];
+            $c['skipped_acts'] = [];
+            foreach ($c['cmids'] ?? [] as $cmid) {
+                if (isset($cms[$cmid])) {
+                    $cm = $cms[$cmid];
+                    $c['activities'][] = [
+                        'cmid'    => $cmid,
+                        'name'    => $cm->name,
+                        'modname' => $cm->modname,
+                    ];
+                }
+            }
+            foreach ($c['skipped_cmids'] ?? [] as $cmid) {
+                if (isset($cms[$cmid])) {
+                    $cm = $cms[$cmid];
+                    $c['skipped_acts'][] = [
+                        'cmid'    => $cmid,
+                        'name'    => $cm->name,
+                        'modname' => $cm->modname,
+                    ];
+                }
+            }
+        }
+        unset($c);
+        return $candidates;
+    }
+
+    /**
+     * Collect tracked activities from a section.
+     *
+     * @param \cm_info[] $modinfo
+     * @param \section_info $section
+     * @param string[] $modtypes    Empty = all tracked types.
+     * @param bool $is_subsection   If true, skip the 'subsection' module itself.
+     * @param int[] $exclude_cmids  cmids to exclude (already in subsections).
+     * @return array ['cmids' => int[], 'skipped' => int, 'skipped_cmids' => int[]]
+     */
+    private static function collect_section_activities(
+        \course_modinfo $modinfo,
+        \section_info $section,
+        array $modtypes,
+        bool $is_subsection = false,
+        array $exclude_cmids = []
+    ): array {
+        $cmids         = [];
+        $skipped       = 0;
+        $skipped_cmids = [];
+
+        foreach ($modinfo->get_cms() as $cm) {
+            if ((int)$cm->section !== (int)$section->id) continue;
+            if ($cm->modname === 'subsection') continue; // Never include subsection containers.
+            if ($cm->modname === 'label')      continue; // Skip text/media.
+            if (in_array((int)$cm->id, $exclude_cmids)) continue;
+            if ($cm->deletioninprogress)       continue;
+
+            // Type filter.
+            if (!empty($modtypes) && !in_array($cm->modname, $modtypes)) continue;
+
+            // Tracking check.
+            if ($cm->completion == 0) {
+                $skipped++;
+                $skipped_cmids[] = (int)$cm->id;
+                continue;
+            }
+
+            $cmids[] = (int)$cm->id;
+        }
+
+        return ['cmids' => $cmids, 'skipped' => $skipped, 'skipped_cmids' => $skipped_cmids];
+    }
+
+    /**
+     * Get the subsection course modules within a section.
+     * Returns cm_info objects for each subsection container.
+     *
+     * @param \course_modinfo $modinfo
+     * @param \section_info   $section
+     * @return \cm_info[]
+     */
+    private static function get_subsections_in_section(
+        \course_modinfo $modinfo,
+        \section_info $section
+    ): array {
+        global $DB;
+        // Use DB query to get instance ID — cm_info->instance may be protected.
+        $rows = $DB->get_records_sql(
+            "SELECT cm.id, cm.instance, cm.section, sub.name as subname
+               FROM {course_modules} cm
+               JOIN {modules} m ON m.id = cm.module AND m.name = 'subsection'
+               JOIN {subsection} sub ON sub.id = cm.instance
+              WHERE cm.section = :sectionid AND cm.deletioninprogress = 0",
+            ['sectionid' => $section->id]
+        );
+        return array_values($rows);
+    }
+
+    /**
+     * Save auto-generated parts to the database.
+     * Handles duplicate name resolution per the chosen strategy.
+     *
+     * @param int    $courseid
+     * @param array  $candidates   From build_auto_parts().
+     * @param string $dupe_action  'skip' | 'overwrite' | 'rename'
+     * @return array  ['created' => int, 'skipped' => int, 'overwritten' => int, 'renamed' => int]
+     */
+    public static function save_auto_parts(
+        int $courseid,
+        array $candidates,
+        string $dupe_action
+    ): array {
+        global $DB;
+
+        $stats = ['created' => 0, 'skipped' => 0, 'overwritten' => 0, 'renamed' => 0];
+
+        foreach ($candidates as $candidate) {
+            if (!empty($candidate['empty']) || empty($candidate['cmids'])) {
+                continue;
+            }
+
+            $name    = $candidate['name'];
+            $existing = $DB->get_record('asyncwatch_parts', ['courseid' => $courseid, 'name' => $name]);
+
+            if ($existing) {
+                if ($dupe_action === 'skip') {
+                    $stats['skipped']++;
+                    continue;
+                } elseif ($dupe_action === 'overwrite') {
+                    // Replace activities on existing part.
+                    self::set_part_activities((int)$existing->id, $candidate['cmids']);
+                    $DB->set_field('asyncwatch_parts', 'is_auto', 1, ['id' => $existing->id]);
+                    $stats['overwritten']++;
+                    continue;
+                } elseif ($dupe_action === 'rename') {
+                    // Append number until unique.
+                    $i = 2;
+                    while ($DB->record_exists('asyncwatch_parts', ['courseid' => $courseid, 'name' => $name . ' (' . $i . ')'])) {
+                        $i++;
+                    }
+                    $name = $name . ' (' . $i . ')';
+                    $stats['renamed']++;
+                }
+            }
+
+            $record = (object)[
+                'courseid'     => $courseid,
+                'name'         => $name,
+                'sortorder'    => 0,
+                'is_auto'      => 1,
+                'timecreated'  => time(),
+                'timemodified' => time(),
+            ];
+            $partid = (int)$DB->insert_record('asyncwatch_parts', $record);
+            self::set_part_activities($partid, $candidate['cmids']);
+            $stats['created']++;
+        }
+
+        return $stats;
+    }
+
+    // -------------------------------------------------------------------------
+    // RULE OVERRIDES
+    // -------------------------------------------------------------------------
+
+    /**
+     * Get all overrides for a rule, keyed by id.
+     */
+    public static function get_rule_overrides(int $ruleid): array {
+        global $DB;
+        return $DB->get_records('asyncwatch_rule_overrides', ['ruleid' => $ruleid], 'deadline ASC');
+    }
+
+    /**
+     * Save (insert or update) a rule override.
+     */
+    public static function save_rule_override(\stdClass $data): int {
+        global $DB;
+        $now = time();
+        if (!empty($data->id)) {
+            $data->timemodified = $now;
+            $DB->update_record('asyncwatch_rule_overrides', $data);
+            return (int)$data->id;
+        }
+        $data->timecreated  = $now;
+        $data->timemodified = $now;
+        return (int)$DB->insert_record('asyncwatch_rule_overrides', $data);
+    }
+
+    /**
+     * Delete a single override.
+     */
+    public static function delete_rule_override(int $overrideid): void {
+        global $DB;
+        $DB->delete_records('asyncwatch_rule_overrides', ['id' => $overrideid]);
+    }
+
+    /**
+     * Delete all overrides for a rule (called when rule is deleted).
+     */
+    public static function delete_rule_overrides(int $ruleid): void {
+        global $DB;
+        $DB->delete_records('asyncwatch_rule_overrides', ['ruleid' => $ruleid]);
+    }
+
+    /**
+     * Get the effective deadline and warn_hours for a user against a rule.
+     *
+     * If the user's group(s) have overrides, returns the one with the latest
+     * deadline (most lenient). Falls back to the rule defaults.
+     *
+     * @return array  ['deadline' => int, 'warn_hours' => int, 'override' => stdClass|null]
+     */
+    public static function get_effective_deadline(
+        \stdClass $rule, int $userid, int $courseid
+    ): array {
+        global $DB;
+
+        // Query group membership directly from DB to avoid stale Moodle cache.
+        $groupids = $DB->get_fieldset_sql(
+            "SELECT gm.groupid
+               FROM {groups_members} gm
+               JOIN {groups} g ON g.id = gm.groupid
+              WHERE gm.userid = :userid AND g.courseid = :courseid",
+            ['userid' => $userid, 'courseid' => $courseid]
+        );
+
+        $best_override = null;
+        if (!empty($groupids)) {
+            list($in_sql, $params) = $DB->get_in_or_equal($groupids);
+            $params[] = $rule->id;
+            $overrides = $DB->get_records_sql(
+                "SELECT * FROM {asyncwatch_rule_overrides}
+                  WHERE groupid $in_sql AND ruleid = ?
+                  ORDER BY deadline DESC",
+                $params
+            );
+            if (!empty($overrides)) {
+                // Use the latest (most lenient) deadline.
+                $best_override = reset($overrides);
+            }
+        }
+
+        if ($best_override) {
+            return [
+                'deadline'   => (int)$best_override->deadline,
+                'warn_hours' => (int)$best_override->warn_hours,
+                'override'   => $best_override,
+            ];
+        }
+
+        return [
+            'deadline'   => (int)$rule->deadline,
+            'warn_hours' => (int)$rule->warn_hours,
+            'override'   => null,
+        ];
+    }
+
+    // -------------------------------------------------------------------------
+    // RULE SETS
+    // -------------------------------------------------------------------------
+
+    public static function get_rule_sets(int $courseid): array {
+        global $DB;
+        return $DB->get_records('asyncwatch_rule_sets', ['courseid' => $courseid], 'name ASC');
+    }
+
+    public static function get_rule_set(int $rulesetid): \stdClass {
+        global $DB;
+        return $DB->get_record('asyncwatch_rule_sets', ['id' => $rulesetid], '*', MUST_EXIST);
+    }
+
+    public static function save_rule_set(\stdClass $data): int {
+        global $DB;
+        $now = time();
+        if (!empty($data->id)) {
+            $data->timemodified = $now;
+            $DB->update_record('asyncwatch_rule_sets', $data);
+            return (int)$data->id;
+        }
+        $data->timecreated  = $now;
+        $data->timemodified = $now;
+        return (int)$DB->insert_record('asyncwatch_rule_sets', $data);
+    }
+
+    public static function delete_rule_set(int $rulesetid): void {
+        global $DB;
+        $DB->delete_records('asyncwatch_ruleset_rules',  ['rulesetid' => $rulesetid]);
+        $DB->delete_records('asyncwatch_ruleset_groups', ['rulesetid' => $rulesetid]);
+        $DB->delete_records('asyncwatch_rule_sets',      ['id'        => $rulesetid]);
+    }
+
+    public static function get_ruleset_ruleids(int $rulesetid): array {
+        global $DB;
+        $rows = $DB->get_records('asyncwatch_ruleset_rules', ['rulesetid' => $rulesetid], '', 'ruleid');
+        return array_map('intval', array_keys($rows));
+    }
+
+    public static function set_ruleset_rules(int $rulesetid, array $ruleids): void {
+        global $DB;
+        $DB->delete_records('asyncwatch_ruleset_rules', ['rulesetid' => $rulesetid]);
+        foreach (array_unique($ruleids) as $rid) {
+            $DB->insert_record('asyncwatch_ruleset_rules', (object)['rulesetid' => $rulesetid, 'ruleid' => (int)$rid]);
+        }
+    }
+
+    public static function get_ruleset_groupids(int $rulesetid): array {
+        global $DB;
+        $rows = $DB->get_records('asyncwatch_ruleset_groups', ['rulesetid' => $rulesetid], '', 'groupid');
+        return array_map('intval', array_keys($rows));
+    }
+
+    public static function set_ruleset_groups(int $rulesetid, array $groupids): void {
+        global $DB;
+        $DB->delete_records('asyncwatch_ruleset_groups', ['rulesetid' => $rulesetid]);
+        foreach (array_unique($groupids) as $gid) {
+            $DB->insert_record('asyncwatch_ruleset_groups', (object)['rulesetid' => $rulesetid, 'groupid' => (int)$gid]);
+        }
+    }
+
+    /**
+     * Return the rule set IDs that a given user belongs to in a course,
+     * based on their course group membership.
+     *
+     * @return int[]  Rule set IDs applicable to this user.
+     */
+    public static function get_user_rulesets(int $courseid, int $userid): array {
+        global $DB;
+
+        // Query group membership directly from DB to avoid stale Moodle cache.
+        $groupids = $DB->get_fieldset_sql(
+            "SELECT gm.groupid
+               FROM {groups_members} gm
+               JOIN {groups} g ON g.id = gm.groupid
+              WHERE gm.userid = :userid AND g.courseid = :courseid",
+            ['userid' => $userid, 'courseid' => $courseid]
+        );
+        if (empty($groupids)) {
+            return [];
+        }
+
+        list($in_sql, $params) = $DB->get_in_or_equal($groupids);
+        $rows = $DB->get_records_sql(
+            "SELECT DISTINCT rulesetid FROM {asyncwatch_ruleset_groups} WHERE groupid $in_sql",
+            $params
+        );
+        return array_map('intval', array_column($rows, 'rulesetid', 'rulesetid'));
+    }
+
+    /**
+     * Return all rule IDs that are assigned to ANY rule set in a course.
+     * Used to identify "set-only" rules.
+     *
+     * @return int[]
+     */
+    public static function get_all_setrule_ids(int $courseid): array {
+        global $DB;
+        $sql = "SELECT DISTINCT rr.ruleid
+                  FROM {asyncwatch_ruleset_rules} rr
+                  JOIN {asyncwatch_rule_sets} rs ON rs.id = rr.rulesetid
+                 WHERE rs.courseid = :courseid";
+        $rows = $DB->get_records_sql($sql, ['courseid' => $courseid]);
+        return array_map('intval', array_column($rows, 'ruleid', 'ruleid'));
+    }
+
+    /**
+     * Get the rule set name a rule belongs to (first match), or null if global.
+     */
+    public static function get_rule_set_name_for_rule(int $ruleid): ?string {
+        global $DB;
+        $sql = "SELECT rs.name
+                  FROM {asyncwatch_rule_sets} rs
+                  JOIN {asyncwatch_ruleset_rules} rr ON rr.rulesetid = rs.id
+                 WHERE rr.ruleid = :ruleid
+                 LIMIT 1";
+        $row = $DB->get_record_sql($sql, ['ruleid' => $ruleid]);
+        return $row ? $row->name : null;
+    }
+
+    // -------------------------------------------------------------------------
+    // NOTIFICATION HELPERS
+    // -------------------------------------------------------------------------
+
+    /**
+     * Has a notification of this type already been sent for this rule + user?
+     */
+    public static function notification_already_sent(int $ruleid, int $userid, string $type): bool {
+        global $DB;
+        return $DB->record_exists('asyncwatch_notifications', [
+            'ruleid' => $ruleid,
+            'userid' => $userid,
+            'type'   => $type,
+        ]);
+    }
+
+    /**
+     * Record that a notification was sent.
+     */
+    public static function record_notification(int $ruleid, int $userid, string $type): void {
+        global $DB;
+        $DB->insert_record('asyncwatch_notifications', (object)[
+            'ruleid'    => $ruleid,
+            'userid'    => $userid,
+            'type'      => $type,
+            'timesent'  => time(),
+        ]);
+    }
+
+    /**
+     * Send an email to a user.
+     *
+     * Body may be HTML (from Atto editor) or plain text.
+     * Moodle's email_to_user accepts both — if $messagehtml is provided it
+     * sends an HTML email with a plain-text fallback auto-generated from it.
+     *
+     * @param stdClass $user
+     * @param string   $subject
+     * @param string   $body       HTML body (may contain tags from Atto).
+     */
+    public static function send_email(\stdClass $user, string $subject, string $body): bool {
+        $support = \core_user::get_support_user();
+
+        // Build plain-text fallback with proper paragraph breaks.
+        // Replace <p> and <br> tags with newlines before stripping,
+        // so paragraph structure is preserved in plain-text clients.
+        $plain = $body;
+        $plain = preg_replace('/<\/p>\s*<p[^>]*>/i', "\n\n", $plain);
+        $plain = preg_replace('/<p[^>]*>/i',  '',     $plain);
+        $plain = preg_replace('/<\/p>/i',     "\n\n", $plain);
+        $plain = preg_replace('/<br\s*\/?>/i',"\n",   $plain);
+        $plain = strip_tags($plain);
+        $plain = html_entity_decode($plain, ENT_QUOTES, 'UTF-8');
+        $plain = preg_replace('/\n{3,}/', "\n\n", trim($plain));
+
+        return email_to_user($user, $support, $subject, $plain, $body);
+    }
+}
