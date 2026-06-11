@@ -52,6 +52,10 @@ $PAGE->set_pagelayout('incourse');
 
 // ── Handle deletions (GET with confirm) ──────────────────────────────────────
 if ($action === 'deletepart' && $id && confirm_sesskey()) {
+    $part = $DB->get_record('asyncwatch_parts', ['id' => $id], 'id,courseid', MUST_EXIST);
+    if ((int)$part->courseid !== $courseid) {
+        throw new \moodle_exception('invalidrecord', 'error');
+    }
     // Warn if rules exist — deleting a part reduces total parts count.
     $rules = helper::get_rules($courseid);
     helper::delete_part($id);
@@ -62,6 +66,10 @@ if ($action === 'deletepart' && $id && confirm_sesskey()) {
     redirect($baseurl, $msg, null, \core\output\notification::NOTIFY_SUCCESS);
 }
 if ($action === 'deleterule' && $id && confirm_sesskey()) {
+    $rule = $DB->get_record('asyncwatch_rules', ['id' => $id], 'id,courseid', MUST_EXIST);
+    if ((int)$rule->courseid !== $courseid) {
+        throw new \moodle_exception('invalidrecord', 'error');
+    }
     helper::delete_rule($id);
     redirect($baseurl, get_string('ruledeleteconfirm', 'local_asyncwatch'), null, \core\output\notification::NOTIFY_SUCCESS);
 }
@@ -71,6 +79,8 @@ if ($action === 'bulkdeleteparts' && confirm_sesskey()) {
     $ids = optional_param_array('bulkids', [], PARAM_INT);
     $rules = helper::get_rules($courseid);
     foreach ($ids as $pid) {
+        $part = $DB->get_record('asyncwatch_parts', ['id' => (int)$pid], 'id,courseid');
+        if (!$part || (int)$part->courseid !== $courseid) continue;
         helper::delete_part((int)$pid);
     }
     $msg = get_string('bulkdeleted', 'local_asyncwatch', count($ids));
@@ -82,6 +92,8 @@ if ($action === 'bulkdeleteparts' && confirm_sesskey()) {
 if ($action === 'bulkdeleterules' && confirm_sesskey()) {
     $ids = optional_param_array('bulkids', [], PARAM_INT);
     foreach ($ids as $rid) {
+        $rule = $DB->get_record('asyncwatch_rules', ['id' => (int)$rid], 'id,courseid');
+        if (!$rule || (int)$rule->courseid !== $courseid) continue;
         helper::delete_rule((int)$rid);
     }
     redirect($baseurl, get_string('bulkdeleted', 'local_asyncwatch', count($ids)), null, \core\output\notification::NOTIFY_SUCCESS);

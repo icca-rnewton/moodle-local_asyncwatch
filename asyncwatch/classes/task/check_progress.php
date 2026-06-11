@@ -42,7 +42,7 @@ class check_progress extends scheduled_task {
 
         $courseid = (int)$rule->courseid;
         $context  = \context_course::instance($courseid);
-        $all_students = get_enrolled_users($context, '');
+        $all_students = get_enrolled_users($context, '', 0, 'u.id, u.firstname, u.lastname, u.email');
 
         if (empty($all_students)) return;
 
@@ -117,6 +117,9 @@ class check_progress extends scheduled_task {
         $needs_tpl = $rule->notify_learner_breach  || $rule->notify_staff_breach
                   || $rule->notify_learner_warning  || $rule->notify_staff_warning;
         $tpl = $needs_tpl ? ($DB->get_record('asyncwatch_ntpl', ['courseid' => $courseid]) ?: null) : null;
+        if ($needs_tpl && $tpl === null) {
+            mtrace("  AsyncWatch: notifications enabled for rule {$rule->id} but no template found for course {$courseid} — skipping notifications.");
+        }
 
         // ── Bulk load: all user progress at once (3 queries regardless of cohort size) ──
         $all_progress = helper::bulk_get_user_progress($courseid, array_keys($students));

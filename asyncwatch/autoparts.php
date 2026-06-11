@@ -105,7 +105,27 @@ foreach ($sections as $sec) {
 if ($step === 3 && $_SERVER['REQUEST_METHOD'] === 'POST' && confirm_sesskey()) {
     $candidates_json = required_param('candidates_json', PARAM_RAW);
     $dupe_action     = required_param('dupe_action', PARAM_ALPHA);
-    $candidates      = json_decode($candidates_json, true) ?: [];
+
+    if (!in_array($dupe_action, ['skip', 'overwrite', 'rename'], true)) {
+        throw new \moodle_exception('invalidparameter', 'error');
+    }
+
+    $candidates_raw = json_decode($candidates_json, true) ?: [];
+
+    // Validate and sanitise each candidate coming from the browser.
+    $candidates = [];
+    foreach ($candidates_raw as $c) {
+        $name = clean_param($c['name'] ?? '', PARAM_TEXT);
+        if (core_text::strlen($name) > 255) {
+            $name = core_text::substr($name, 0, 255);
+        }
+        if ($name === '') continue;
+        $candidates[] = [
+            'name'     => $name,
+            'cmids'    => array_map('intval', $c['cmids'] ?? []),
+            'empty'    => !empty($c['empty']),
+        ];
+    }
 
     $stats = helper::save_auto_parts($courseid, $candidates, $dupe_action);
 
@@ -408,7 +428,7 @@ if ($step === 2 && !empty($candidates)) {
         echo '</form>';
 
         // JS — toggle detail rows, update counts/status, build candidates_json on submit.
-        $candidates_json = json_encode($candidates);
+        $candidates_json = json_encode($candidates, JSON_HEX_TAG);
         echo '<script>
 (function() {
     var candidates = ' . $candidates_json . ';

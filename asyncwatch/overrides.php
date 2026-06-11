@@ -42,6 +42,10 @@ $PAGE->set_pagelayout('incourse');
 
 // ── Handle delete ─────────────────────────────────────────────────────────────
 if ($action === 'deleteoverride' && $id && confirm_sesskey()) {
+    $override = $DB->get_record('asyncwatch_rule_overrides', ['id' => $id], 'id,ruleid', MUST_EXIST);
+    if ((int)$override->ruleid !== (int)$rule->id) {
+        throw new \moodle_exception('invalidrecord', 'error');
+    }
     helper::delete_rule_override($id);
     redirect($pageurl, get_string('overridedeleted', 'local_asyncwatch'), null,
         \core\output\notification::NOTIFY_SUCCESS);

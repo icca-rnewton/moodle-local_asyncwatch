@@ -154,5 +154,83 @@ function xmldb_local_asyncwatch_upgrade($oldversion) {
         upgrade_plugin_savepoint(true, 2026052000, 'local', 'asyncwatch');
     }
 
+
+    if ($oldversion < 2026061000) {
+        $dbman = $DB->get_manager();
+
+        // 1. Add UNIQUE index on asyncwatch_ruleset_rules(ruleid) —
+        //    a rule can belong to at most one rule set.
+        $table = new xmldb_table('asyncwatch_ruleset_rules');
+        $index = new xmldb_index('uniq_ruleid', XMLDB_INDEX_UNIQUE, ['ruleid']);
+        if (!$dbman->index_exists($table, $index)) {
+            // Remove any duplicate rows first (keep lowest id per ruleid).
+            $DB->execute("
+                DELETE FROM {asyncwatch_ruleset_rules}
+                 WHERE id NOT IN (
+                     SELECT MIN(id) FROM {asyncwatch_ruleset_rules} GROUP BY ruleid
+                 )
+            ");
+            $dbman->add_index($table, $index);
+        }
+        $index2 = new xmldb_index('uniq_rulesetid_ruleid', XMLDB_INDEX_UNIQUE, ['rulesetid', 'ruleid']);
+        if (!$dbman->index_exists($table, $index2)) {
+            $dbman->add_index($table, $index2);
+        }
+
+        // 2. Add UNIQUE index on asyncwatch_ruleset_groups(rulesetid, groupid).
+        $table = new xmldb_table('asyncwatch_ruleset_groups');
+        $index = new xmldb_index('uniq_rulesetid_groupid', XMLDB_INDEX_UNIQUE, ['rulesetid', 'groupid']);
+        if (!$dbman->index_exists($table, $index)) {
+            $DB->execute("
+                DELETE FROM {asyncwatch_ruleset_groups}
+                 WHERE id NOT IN (
+                     SELECT MIN(id) FROM {asyncwatch_ruleset_groups} GROUP BY rulesetid, groupid
+                 )
+            ");
+            $dbman->add_index($table, $index);
+        }
+
+        // 3. Make asyncwatch_notifications(ruleid, userid, type) UNIQUE.
+        $table = new xmldb_table('asyncwatch_notifications');
+        $old_index = new xmldb_index('idx_rule_user_type', XMLDB_INDEX_NOTUNIQUE, ['ruleid', 'userid', 'type']);
+        $new_index = new xmldb_index('idx_rule_user_type', XMLDB_INDEX_UNIQUE,    ['ruleid', 'userid', 'type']);
+        if ($dbman->index_exists($table, $old_index)) {
+            // Remove duplicate notification rows first (keep most recent).
+            $DB->execute("
+                DELETE FROM {asyncwatch_notifications}
+                 WHERE id NOT IN (
+                     SELECT MAX(id) FROM {asyncwatch_notifications} GROUP BY ruleid, userid, type
+                 )
+            ");
+            $dbman->drop_index($table, $old_index);
+            $dbman->add_index($table, $new_index);
+        }
+
+        // 4. Add UNIQUE index on asyncwatch_ntpl(courseid) — one row per course.
+        $table = new xmldb_table('asyncwatch_ntpl');
+        $index = new xmldb_index('uniq_courseid', XMLDB_INDEX_UNIQUE, ['courseid']);
+        if (!$dbman->index_exists($table, $index)) {
+            $DB->execute("
+                DELETE FROM {asyncwatch_ntpl}
+                 WHERE id NOT IN (
+                     SELECT MIN(id) FROM {asyncwatch_ntpl} GROUP BY courseid
+                 )
+            ");
+            $dbman->add_index($table, $index);
+        }
+
+        // 5. Drop legacy notify_enabled column from asyncwatch_rules.
+        $table = new xmldb_table('asyncwatch_rules');
+        $field = new xmldb_field('notify_enabled');
+        if ($dbman->field_exists($table, $field)) {
+            $dbman->drop_field($table, $field);
+        }
+
+        upgrade_plugin_savepoint(true, 2026061000, 'local', 'asyncwatch');
+    }
+
     return true;
 }
+
+
+// NOTE: append before the final "return true;" — handled by replacing below

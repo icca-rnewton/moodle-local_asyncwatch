@@ -49,23 +49,57 @@ foreach ($students as $user) {
     $user_progress[$user->id] = helper::get_user_progress($courseid, (int)$user->id);
 }
 
-$all_rows      = [];
-$user_groupids = [];
+// ── Pre-load rule set memberships + group memberships for filtering ────────────
+// Mirrors the cron task's logic so the report only shows users against rules
+// that actually apply to them (set-assigned rules → group members only;
+// global rules → all enrolled users).
+$rule_to_rulesetid  = []; // [ruleid => rulesetid|0]
+$ruleset_to_groupids = []; // [rulesetid => [groupid, ...]]
 foreach ($all_rules as $rule) {
-    foreach ($students as $user) {
-        $prog = $user_progress[$user->id];
-        $done = $prog['completed'];
-        $eff  = helper::get_effective_deadline($rule, (int)$user->id, $courseid);
-        $status = aw_row_status($rule, $done, $now, $eff['deadline'], $eff['warn_hours']);
+    $srec = $DB->get_record('asyncwatch_ruleset_rules', ['ruleid' => $rule->id], 'rulesetid');
+    $rule_to_rulesetid[$rule->id] = $srec ? (int)$srec->rulesetid : 0;
+}
+foreach (array_unique(array_filter(array_values($rule_to_rulesetid))) as $rsid) {
+    $ruleset_to_groupids[$rsid] = helper::get_ruleset_groupids($rsid);
+}
 
-        if (!isset($user_groupids[$user->id])) {
-            $user_groupids[$user->id] = $DB->get_fieldset_sql(
-                "SELECT gm.groupid FROM {groups_members} gm
-                   JOIN {groups} g ON g.id = gm.groupid
-                  WHERE gm.userid = :userid AND g.courseid = :courseid",
-                ['userid' => $user->id, 'courseid' => $courseid]
-            );
+// Pre-load all user group memberships in one query.
+$all_user_ids = array_keys($students);
+$user_groupids = [];
+if (!empty($all_user_ids)) {
+    list($in_sql, $in_params) = $DB->get_in_or_equal($all_user_ids);
+    $in_params[] = $courseid;
+    $gm_rows = $DB->get_records_sql(
+        "SELECT gm.userid, gm.groupid
+           FROM {groups_members} gm
+           JOIN {groups} g ON g.id = gm.groupid
+          WHERE gm.userid $in_sql AND g.courseid = ?",
+        $in_params
+    );
+    foreach ($gm_rows as $gm) {
+        $user_groupids[(int)$gm->userid][] = (int)$gm->groupid;
+    }
+}
+
+$all_rows = [];
+foreach ($all_rules as $rule) {
+    $rulesetid     = $rule_to_rulesetid[$rule->id];
+    $set_groupids  = $rulesetid ? ($ruleset_to_groupids[$rulesetid] ?? []) : [];
+
+    foreach ($students as $user) {
+        $uid        = (int)$user->id;
+        $ugroups    = $user_groupids[$uid] ?? [];
+
+        // Apply the same filtering the cron uses:
+        // set-assigned rules only apply to users in the set's groups.
+        if ($rulesetid && !empty($set_groupids) && !array_intersect($ugroups, $set_groupids)) {
+            continue;
         }
+
+        $prog   = $user_progress[$uid];
+        $done   = $prog['completed'];
+        $eff    = helper::get_effective_deadline($rule, $uid, $courseid);
+        $status = aw_row_status($rule, $done, $now, $eff['deadline'], $eff['warn_hours']);
 
         $all_rows[] = (object)[
             'rule'          => $rule,
@@ -78,17 +112,13 @@ foreach ($all_rules as $rule) {
             'eff_deadline'  => $eff['deadline'],
             'has_override'  => $eff['override'] !== null,
             'override_warn' => $eff['override'] ? (int)$eff['override']->warn_hours : null,
-            'groupids'      => $user_groupids[$user->id],
+            'groupids'      => $ugroups,
         ];
     }
 }
 
 // ── Filter ────────────────────────────────────────────────────────────────────
-$rule_to_rulesets = [];
-foreach ($all_rules as $rule) {
-    $srec = $DB->get_record('asyncwatch_ruleset_rules', ['ruleid' => $rule->id], 'rulesetid');
-    $rule_to_rulesets[$rule->id] = $srec ? (int)$srec->rulesetid : 0;
-}
+$rule_to_rulesets = $rule_to_rulesetid; // reuse for filter block below
 
 $rows = array_filter($all_rows, function($r) use (
     $filter_ruleid, $filter_userid, $filter_status,
@@ -563,7 +593,7 @@ if (empty($rows)) {
             $default_warn_cell,
             html_writer::link(
                 new moodle_url('/user/view.php', ['id' => $row->user->id, 'course' => $courseid]),
-                fullname($row->user)
+                s(fullname($row->user))
             ),
             $row->rule->parts_required . ' / ' . $row->total,
             $progress_bar,

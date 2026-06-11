@@ -49,7 +49,6 @@
         <FIELD NAME="deadline" TYPE="int" LENGTH="10" NOTNULL="true"/>
         <FIELD NAME="warn_hours" TYPE="int" LENGTH="6" NOTNULL="false" DEFAULT="0"/>
         <FIELD NAME="enabled" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="1"/>
-        <FIELD NAME="notify_enabled" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="0" COMMENT="Legacy: replaced by granular columns below"/>
         <FIELD NAME="notify_learner_breach" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="0"/>
         <FIELD NAME="notify_staff_breach" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="0"/>
         <FIELD NAME="notify_learner_warning" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="0"/>
@@ -81,7 +80,7 @@
         <KEY NAME="fk_user" TYPE="foreign" FIELDS="userid" REFTABLE="user" REFFIELDS="id"/>
       </KEYS>
       <INDEXES>
-        <INDEX NAME="idx_rule_user_type" UNIQUE="false" FIELDS="ruleid,userid,type"/>
+        <INDEX NAME="idx_rule_user_type" UNIQUE="true" FIELDS="ruleid,userid,type"/>
       </INDEXES>
     </TABLE>
 
@@ -110,6 +109,9 @@
         <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
         <KEY NAME="fk_course" TYPE="foreign" FIELDS="courseid" REFTABLE="course" REFFIELDS="id"/>
       </KEYS>
+      <INDEXES>
+        <INDEX NAME="uniq_courseid" UNIQUE="true" FIELDS="courseid" COMMENT="One template row per course"/>
+      </INDEXES>
     </TABLE>
 
 
@@ -138,6 +140,10 @@
         <KEY NAME="fk_ruleset" TYPE="foreign" FIELDS="rulesetid" REFTABLE="asyncwatch_rule_sets" REFFIELDS="id"/>
         <KEY NAME="fk_rule" TYPE="foreign" FIELDS="ruleid" REFTABLE="asyncwatch_rules" REFFIELDS="id"/>
       </KEYS>
+      <INDEXES>
+        <INDEX NAME="uniq_ruleid" UNIQUE="true" FIELDS="ruleid" COMMENT="A rule can belong to at most one rule set"/>
+        <INDEX NAME="uniq_rulesetid_ruleid" UNIQUE="true" FIELDS="rulesetid,ruleid"/>
+      </INDEXES>
     </TABLE>
 
     <TABLE NAME="asyncwatch_ruleset_groups" COMMENT="Course groups assigned to a rule set">
@@ -151,6 +157,9 @@
         <KEY NAME="fk_ruleset" TYPE="foreign" FIELDS="rulesetid" REFTABLE="asyncwatch_rule_sets" REFFIELDS="id"/>
         <KEY NAME="fk_group" TYPE="foreign" FIELDS="groupid" REFTABLE="groups" REFFIELDS="id"/>
       </KEYS>
+      <INDEXES>
+        <INDEX NAME="uniq_rulesetid_groupid" UNIQUE="true" FIELDS="rulesetid,groupid"/>
+      </INDEXES>
     </TABLE>
 
 

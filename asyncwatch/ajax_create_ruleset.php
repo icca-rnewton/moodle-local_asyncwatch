@@ -50,7 +50,11 @@ try {
 
     echo json_encode(['id' => $newid, 'name' => $name]);
 
-} catch (\Throwable $e) {
+} catch (\invalid_parameter_exception $e) {
     echo json_encode(['error' => $e->getMessage()]);
+} catch (\Throwable $e) {
+    // Don't expose internal details to the browser.
+    mtrace('AsyncWatch ajax_create_ruleset error: ' . $e->getMessage());
+    echo json_encode(['error' => get_string('unexpectederror', 'error')]);
 }
 exit;
