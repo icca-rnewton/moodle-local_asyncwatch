@@ -175,6 +175,22 @@ class global_rule_form extends \moodleform {
             \html_writer::tag('p', get_string('globalrule_wording_note', 'local_asyncwatch'), ['class' => 'text-muted small mt-2'])
         );
 
+        // ── Profile field sync ──────────────────────────────────────────────
+        $mform->addElement('header', 'profilefield_header',
+            get_string('profilefield_header', 'local_asyncwatch'));
+        $mform->addElement('static', 'profilefield_desc', '',
+            \html_writer::tag('p',
+                get_string('profilefield_desc', 'local_asyncwatch'),
+                ['class' => 'text-muted small mb-2']
+            )
+        );
+        $field_options = ['' => get_string('profilefield_none', 'local_asyncwatch')]
+            + ($this->_customdata['profile_field_options'] ?? []);
+        $mform->addElement('select', 'profilefield',
+            get_string('profilefield', 'local_asyncwatch'), $field_options);
+        $mform->setType('profilefield', PARAM_ALPHANUMEXT);
+        $mform->addHelpButton('profilefield', 'profilefield', 'local_asyncwatch');
+
         // ── Cohort targeting ─────────────────────────────────────────────
         $mform->addElement('header', 'cohorts_header', get_string('globalrule_cohorts', 'local_asyncwatch'));
         $mform->addElement('static', 'cohorts_desc', '',

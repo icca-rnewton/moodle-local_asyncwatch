@@ -98,9 +98,10 @@ foreach ($all_cohorts_raw as $ch) {
 $form = null;
 if (in_array($action, ['add', 'edit'])) {
     $form = new global_rule_form($formurl->out(false), [
-        'ruleid'              => $id,
-        'courses_with_parts'  => $courses_with_parts,
-        'cohorts'             => $cohort_options,
+        'ruleid'                => $id,
+        'courses_with_parts'    => $courses_with_parts,
+        'cohorts'               => $cohort_options,
+        'profile_field_options' => helper::get_profile_field_options(),
     ]);
 
     if ($form->is_cancelled()) {
@@ -118,6 +119,7 @@ if (in_array($action, ['add', 'edit'])) {
             'notify_staff_breach'    => (int)($formdata->notify_staff_breach    ?? 0),
             'notify_learner_warning' => (int)($formdata->notify_learner_warning ?? 0),
             'notify_staff_warning'   => (int)($formdata->notify_staff_warning   ?? 0),
+            'profilefield'           => trim($formdata->profilefield ?? ''),
         ];
         if ($id) {
             $record->id = $id;
@@ -152,6 +154,7 @@ if (in_array($action, ['add', 'edit'])) {
             'warn_enabled'           => $warn_fields['warn_enabled'],
             'warn_value'             => $warn_fields['warn_value'],
             'warn_unit'              => $warn_fields['warn_unit'],
+            'profilefield'           => $rule->profilefield ?? '',
         ]);
     }
 }

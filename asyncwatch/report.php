@@ -19,7 +19,6 @@ $courseid         = required_param('courseid', PARAM_INT);
 $filter_ruleid    = optional_param('ruleid',         0,  PARAM_INT);
 $filter_userid    = optional_param('userid',         0,  PARAM_INT);
 $filter_status    = optional_param('filterstatus',   '', PARAM_ALPHA);
-$filter_rulesetid = optional_param('rulesetid',      0,  PARAM_INT);
 $filter_groupid   = optional_param('filtergroupid',  0,  PARAM_INT);
 $filter_cohortid  = optional_param('filtercohortid', 0,  PARAM_INT);
 $filter_override  = optional_param('filteroverride', '', PARAM_ALPHA);
@@ -53,20 +52,31 @@ foreach ($students as $user) {
     $user_progress[$user->id] = helper::get_user_progress($courseid, (int)$user->id);
 }
 
-// ── Pre-load rule set memberships + group/cohort memberships for filtering ──────
+// ── Pre-load rule restriction + group/cohort memberships for filtering ─────────
 // Mirrors the cron task's logic so the report only shows users against rules
-// that actually apply to them (set-assigned rules → group/cohort members
-// only; global rules → all enrolled users).
-$rule_to_rulesetid   = []; // [ruleid => rulesetid|0]
-$ruleset_to_groupids  = []; // [rulesetid => [groupid, ...]]
-$ruleset_to_cohortids = []; // [rulesetid => [cohortid, ...]]
+// that actually apply to them (restricted rules → group/cohort members
+// only; unrestricted rules → all enrolled users).
+$rule_to_restrict_groupids  = []; // [ruleid => [groupid, ...]]
+$rule_to_restrict_cohortids = []; // [ruleid => [cohortid, ...]]
+
+// Also track every group/cohort actually referenced by ANY rule in this
+// course — via a Restriction or an Override — so the filter dropdowns
+// below only offer options that are actually relevant here, rather than
+// every course group / every site cohort that happens to overlap with
+// enrolment.
+$relevant_groupids  = [];
+$relevant_cohortids = [];
+
 foreach ($all_rules as $rule) {
-    $srec = $DB->get_record('asyncwatch_ruleset_rules', ['ruleid' => $rule->id], 'rulesetid');
-    $rule_to_rulesetid[$rule->id] = $srec ? (int)$srec->rulesetid : 0;
-}
-foreach (array_unique(array_filter(array_values($rule_to_rulesetid))) as $rsid) {
-    $ruleset_to_groupids[$rsid]  = helper::get_ruleset_groupids($rsid);
-    $ruleset_to_cohortids[$rsid] = helper::get_ruleset_cohortids($rsid);
+    $rid = (int)$rule->id;
+
+    $rule_to_restrict_groupids[$rid]  = helper::get_rule_restrict_groupids($rid);
+    $rule_to_restrict_cohortids[$rid] = helper::get_rule_restrict_cohortids($rid);
+    foreach ($rule_to_restrict_groupids[$rid]  as $gid) $relevant_groupids[$gid]  = true;
+    foreach ($rule_to_restrict_cohortids[$rid] as $cid) $relevant_cohortids[$cid] = true;
+
+    foreach (helper::get_rule_overrides($rid) as $ov)        $relevant_groupids[(int)$ov->groupid]   = true;
+    foreach (helper::get_rule_cohort_overrides($rid) as $ov) $relevant_cohortids[(int)$ov->cohortid] = true;
 }
 
 // Pre-load all user group memberships in one query.
@@ -102,20 +112,19 @@ if (!empty($all_user_ids)) {
 
 $all_rows = [];
 foreach ($all_rules as $rule) {
-    $rulesetid     = $rule_to_rulesetid[$rule->id];
-    $set_groupids  = $rulesetid ? ($ruleset_to_groupids[$rulesetid]  ?? []) : [];
-    $set_cohortids = $rulesetid ? ($ruleset_to_cohortids[$rulesetid] ?? []) : [];
+    $restrict_groupids  = $rule_to_restrict_groupids[$rule->id]  ?? [];
+    $restrict_cohortids = $rule_to_restrict_cohortids[$rule->id] ?? [];
 
     foreach ($students as $user) {
         $uid        = (int)$user->id;
         $ugroups    = $user_groupids[$uid] ?? [];
         $ucohorts   = $user_cohortids_map[$uid] ?? [];
 
-        // Apply the same filtering the cron uses: set-assigned rules only
-        // apply to users in the set's groups OR the set's cohorts.
-        if ($rulesetid && (!empty($set_groupids) || !empty($set_cohortids))
-                && !array_intersect($ugroups, $set_groupids)
-                && !array_intersect($ucohorts, $set_cohortids)) {
+        // Apply the same filtering the cron uses: restricted rules only
+        // apply to users in the rule's restricted groups OR cohorts.
+        if ((!empty($restrict_groupids) || !empty($restrict_cohortids))
+                && !array_intersect($ugroups, $restrict_groupids)
+                && !array_intersect($ucohorts, $restrict_cohortids)) {
             continue;
         }
 
@@ -142,18 +151,13 @@ foreach ($all_rules as $rule) {
 }
 
 // ── Filter ────────────────────────────────────────────────────────────────────
-$rule_to_rulesets = $rule_to_rulesetid; // reuse for filter block below
-
 $rows = array_filter($all_rows, function($r) use (
     $filter_ruleid, $filter_userid, $filter_status,
-    $filter_rulesetid, $filter_override, $filter_groupid, $filter_cohortid, $rule_to_rulesets
+    $filter_override, $filter_groupid, $filter_cohortid
 ) {
     if ($filter_ruleid    && (int)$r->rule->id !== $filter_ruleid) return false;
     if ($filter_userid    && (int)$r->user->id !== $filter_userid) return false;
     if ($filter_status    && $r->status        !== $filter_status) return false;
-    if ($filter_rulesetid) {
-        if (($rule_to_rulesets[$r->rule->id] ?? 0) !== $filter_rulesetid) return false;
-    }
     if ($filter_override === 'override' && !$r->has_override) return false;
     if ($filter_override === 'default'  &&  $r->has_override) return false;
     if ($filter_groupid  && !in_array((string)$filter_groupid,  array_map('strval', $r->groupids  ?? []))) return false;
@@ -188,7 +192,6 @@ $manage_url = new moodle_url('/local/asyncwatch/manage.php', ['courseid' => $cou
 $tabs = [
     new tabobject('parts',         new moodle_url($manage_url, ['tab' => 'parts']),  get_string('tab_parts',         'local_asyncwatch')),
     new tabobject('rules',         new moodle_url($manage_url, ['tab' => 'rules']),  get_string('tab_rules',         'local_asyncwatch')),
-    new tabobject('rulesets',      new moodle_url('/local/asyncwatch/rulesets.php',      ['courseid' => $courseid]), get_string('tab_rulesets',      'local_asyncwatch')),
     new tabobject('report',        $pageurl,                                                                          get_string('tab_report',        'local_asyncwatch')),
     new tabobject('notifications', new moodle_url('/local/asyncwatch/notifications.php', ['courseid' => $courseid]), get_string('tab_notifications', 'local_asyncwatch')),
 ];
@@ -245,8 +248,12 @@ foreach ([
 }
 echo '</select></div>';
 
-// Group filter.
-$all_groups_for_filter = groups_get_all_groups($courseid);
+// Group filter — only offer groups actually referenced by a Restriction or
+// Override on one of this course's rules (not every course group).
+$all_groups_for_filter = array_filter(
+    groups_get_all_groups($courseid),
+    fn($g) => isset($relevant_groupids[(int)$g->id])
+);
 if (!empty($all_groups_for_filter)) {
     echo '<div class="mr-2 mb-2"><label class="d-block small font-weight-bold mb-1" for="filter_groupid">' . get_string('filter_group', 'local_asyncwatch') . '</label>';
     echo '<select name="filtergroupid" id="filter_groupid" class="custom-select me-2 mb-2">';
@@ -258,14 +265,17 @@ if (!empty($all_groups_for_filter)) {
     echo '</select></div>';
 }
 
-// Cohort filter — only offer cohorts that at least one enrolled student is
-// actually in, so the list doesn't fill up with irrelevant site cohorts.
+// Cohort filter — only offer cohorts that are both (a) actually referenced
+// by a Restriction or Override on one of this course's rules, and (b) have
+// at least one enrolled student in them, so the list never fills up with
+// irrelevant site cohorts.
 $cohorts_present = [];
 foreach ($user_cohortids_map as $cids) {
     foreach ($cids as $cid) {
         $cohorts_present[$cid] = true;
     }
 }
+$cohorts_present = array_intersect_key($cohorts_present, $relevant_cohortids);
 if (!empty($cohorts_present)) {
     $all_cohorts_for_filter = helper::get_all_cohorts();
     echo '<div class="mr-2 mb-2"><label class="d-block small font-weight-bold mb-1" for="filter_cohortid">' . get_string('filter_cohort', 'local_asyncwatch') . '</label>';
@@ -294,26 +304,12 @@ foreach ([
 }
 echo '</select></div>';
 
-// Rule Set filter.
-$all_rulesets_for_filter = helper::get_rule_sets($courseid);
-if (!empty($all_rulesets_for_filter)) {
-    echo '<div class="mr-2 mb-2"><label class="d-block small font-weight-bold mb-1" for="filter_rulesetid">' . get_string('filter_ruleset', 'local_asyncwatch') . '</label>';
-    echo '<select name="rulesetid" id="filter_rulesetid" class="custom-select me-2 mb-2">';
-    echo '<option value="0">' . get_string('filter_ruleset_all', 'local_asyncwatch') . '</option>';
-    foreach ($all_rulesets_for_filter as $rs) {
-        $sel = ($filter_rulesetid === (int)$rs->id) ? ' selected' : '';
-        echo '<option value="' . (int)$rs->id . '"' . $sel . '>' . s(format_string($rs->name)) . '</option>';
-    }
-    echo '</select></div>';
-}
-
 // Build the CSV export URL from the current filters — shared with the
 // button below and with the staff digest emails (helper::rows_to_csv()).
 $csv_params = ['courseid' => $courseid, 'download' => 'csv'];
 if ($filter_ruleid)    $csv_params['ruleid']        = $filter_ruleid;
 if ($filter_userid)    $csv_params['userid']        = $filter_userid;
 if ($filter_status)    $csv_params['filterstatus']  = $filter_status;
-if ($filter_rulesetid) $csv_params['rulesetid']     = $filter_rulesetid;
 if ($filter_groupid)   $csv_params['filtergroupid'] = $filter_groupid;
 if ($filter_cohortid)  $csv_params['filtercohortid']= $filter_cohortid;
 if ($filter_override)  $csv_params['filteroverride']= $filter_override;
@@ -322,7 +318,7 @@ $csv_url = new moodle_url('/local/asyncwatch/report.php', $csv_params);
 echo '<div class="mb-2">';
 echo '<button type="submit" class="btn btn-primary me-2 mb-2">' . get_string('applyfilter', 'local_asyncwatch') . '</button>';
 echo html_writer::link($csv_url, get_string('exportcsv', 'local_asyncwatch'), ['class' => 'btn btn-secondary me-2 mb-2']);
-if ($filter_ruleid || $filter_userid || $filter_status || $filter_rulesetid || $filter_override || $filter_groupid || $filter_cohortid) {
+if ($filter_ruleid || $filter_userid || $filter_status || $filter_override || $filter_groupid || $filter_cohortid) {
     echo ' <a href="' . $pageurl->out(false) . '" class="btn btn-link btn-sm">' . get_string('clearfilter', 'local_asyncwatch') . '</a>';
 }
 echo '</div>';
@@ -333,14 +329,11 @@ echo '</div></form>';
 // themselves — otherwise clicking "Behind" makes every other pill show 0,
 // since the underlying rows would already be filtered down to breach-only.
 $rows_for_summary = array_filter($all_rows, function($r) use (
-    $filter_ruleid, $filter_userid, $filter_rulesetid, $filter_override,
-    $filter_groupid, $filter_cohortid, $rule_to_rulesets
+    $filter_ruleid, $filter_userid, $filter_override,
+    $filter_groupid, $filter_cohortid
 ) {
     if ($filter_ruleid    && (int)$r->rule->id !== $filter_ruleid) return false;
     if ($filter_userid    && (int)$r->user->id !== $filter_userid) return false;
-    if ($filter_rulesetid) {
-        if (($rule_to_rulesets[$r->rule->id] ?? 0) !== $filter_rulesetid) return false;
-    }
     if ($filter_override === 'override' && !$r->has_override) return false;
     if ($filter_override === 'default'  &&  $r->has_override) return false;
     if ($filter_groupid  && !in_array((string)$filter_groupid,  array_map('strval', $r->groupids  ?? []))) return false;
@@ -409,7 +402,7 @@ if (!empty($rows_for_summary)) {
         // the "go up a level" behaviour for a status-pill or override click.
         $already_just_this_rule = ($filter_ruleid === $rid)
             && $filter_status === '' && $filter_userid === 0
-            && $filter_rulesetid === 0 && $filter_override === ''
+            && $filter_override === ''
             && $filter_groupid === 0 && $filter_cohortid === 0;
         $card_target = $already_just_this_rule
             ? new moodle_url($pageurl, ['courseid' => $courseid])
@@ -505,7 +498,6 @@ if (empty($rows)) {
         'ruleid'         => $filter_ruleid,
         'userid'         => $filter_userid,
         'filterstatus'   => $filter_status,
-        'rulesetid'      => $filter_rulesetid,
         'filtergroupid'  => $filter_groupid,
         'filtercohortid' => $filter_cohortid,
         'filteroverride' => $filter_override,

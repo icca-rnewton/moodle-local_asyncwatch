@@ -105,6 +105,9 @@ if (in_array($action, ['addoverride', 'editoverride'])) {
 
     if ($action === 'editoverride' && $id) {
         $ov   = $DB->get_record('asyncwatch_global_rule_overrides', ['id' => $id], '*', MUST_EXIST);
+        if ((int)$ov->ruleid !== $ruleid) {
+            throw new \moodle_exception('invalidrecord', 'error');
+        }
         $warn = override_form::minutes_to_fields((int)$ov->warn_hours);
         $form->set_data(array_merge([
             'overrideid' => $id,
@@ -175,17 +178,17 @@ if ($form) {
             $actions =
                 html_writer::link($edit_url,   $OUTPUT->pix_icon('t/edit',   get_string('edit'))) . ' ' .
                 html_writer::link($delete_url, $OUTPUT->pix_icon('t/delete', get_string('delete')),
-                    ['onclick' => 'return confirm(' . json_encode(get_string('overridedeleteconfirm', 'local_asyncwatch')) . ')']);
+                    ['onclick' => 'return confirm(' . json_encode(get_string('overridedeleteconfirm_cohort', 'local_asyncwatch')) . ')']);
 
             $table->data[] = [$cohort_name, userdate($ov->deadline), $wdisp, $actions];
         }
         echo html_writer::table($table);
     } else {
-        echo $OUTPUT->notification(get_string('nooverrides', 'local_asyncwatch'), 'info');
+        echo $OUTPUT->notification(get_string('nooverrides_cohort', 'local_asyncwatch'), 'info');
     }
 
     $add_url = new moodle_url($pageurl, ['action' => 'addoverride']);
-    echo $OUTPUT->single_button($add_url, get_string('addoverride', 'local_asyncwatch'), 'get');
+    echo $OUTPUT->single_button($add_url, get_string('addoverride_cohort', 'local_asyncwatch'), 'get');
 }
 
 echo $OUTPUT->footer();

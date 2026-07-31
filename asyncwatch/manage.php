@@ -129,6 +129,9 @@ if ($tab === 'parts' && in_array($action, ['addpart', 'editpart'])) {
     // Pre-populate form when editing.
     if ($action === 'editpart' && $id) {
         $part = helper::get_part($id);
+        if ((int)$part->courseid !== $courseid) {
+            throw new \moodle_exception('invalidrecord', 'error');
+        }
         $part_form->set_data(['name' => $part->name, 'partid' => $id, 'courseid' => $courseid]);
     }
 }
@@ -137,17 +140,23 @@ if ($tab === 'parts' && in_array($action, ['addpart', 'editpart'])) {
 $rule_form = null;
 if ($tab === 'rules' && in_array($action, ['addrule', 'editrule'])) {
     $total_parts = count(helper::get_parts($courseid));
-    // Look up current ruleset assignment so the form can pre-select it.
-    $current_rulesetid = 0;
-    if ($id) {
-        $srec = $DB->get_record('asyncwatch_ruleset_rules', ['ruleid' => $id], 'rulesetid');
-        $current_rulesetid = $srec ? (int)$srec->rulesetid : 0;
+
+    $group_options = [];
+    foreach (groups_get_all_groups($courseid) as $g) {
+        $group_options[(int)$g->id] = format_string($g->name);
     }
+    $cohort_options = [];
+    foreach (helper::get_all_cohorts() as $c) {
+        $cohort_options[(int)$c->id] = format_string($c->name);
+    }
+
     $rule_form = new rule_form($formurl->out(false), [
-        'courseid'          => $courseid,
-        'ruleid'            => $id,
-        'total_parts'       => $total_parts,
-        'current_rulesetid' => $current_rulesetid,
+        'courseid'              => $courseid,
+        'ruleid'                => $id,
+        'total_parts'           => $total_parts,
+        'profile_field_options' => helper::get_profile_field_options(),
+        'group_options'         => $group_options,
+        'cohort_options'        => $cohort_options,
     ]);
 
     if ($rule_form->is_cancelled()) {
@@ -166,30 +175,26 @@ if ($tab === 'rules' && in_array($action, ['addrule', 'editrule'])) {
             'notify_staff_breach'   => (int)($formdata->notify_staff_breach    ?? 0),
             'notify_learner_warning'=> (int)($formdata->notify_learner_warning ?? 0),
             'notify_staff_warning'  => (int)($formdata->notify_staff_warning   ?? 0),
+            'profilefield'          => trim($formdata->profilefield ?? ''),
         ];
         if ($id) {
             $record->id = $id;
         }
         $ruleid = helper::save_rule($record);
 
-        // Handle rule set assignment.
-        $rulesetid = (int)($formdata->rulesetid ?? 0);
-        // Remove from any existing set first.
-        $DB->delete_records('asyncwatch_ruleset_rules', ['ruleid' => $ruleid]);
-        if ($rulesetid > 0) {
-            // Add to new set (avoid duplicate).
-            if (!$DB->record_exists('asyncwatch_ruleset_rules', ['rulesetid' => $rulesetid, 'ruleid' => $ruleid])) {
-                $DB->insert_record('asyncwatch_ruleset_rules', (object)['rulesetid' => $rulesetid, 'ruleid' => $ruleid]);
-            }
-        }
+        // Restrictions — empty selections mean the rule applies to everyone.
+        helper::set_rule_restrict_groups($ruleid, array_map('intval', (array)($formdata->restrict_groupids ?? [])));
+        helper::set_rule_restrict_cohorts($ruleid, array_map('intval', (array)($formdata->restrict_cohortids ?? [])));
 
         redirect($baseurl, get_string('rulesaved', 'local_asyncwatch'), null, \core\output\notification::NOTIFY_SUCCESS);
     }
 
     if ($action === 'editrule' && $id) {
         $rule = $DB->get_record('asyncwatch_rules', ['id' => $id], '*', MUST_EXIST);
+        if ((int)$rule->courseid !== $courseid) {
+            throw new \moodle_exception('invalidrecord', 'error');
+        }
         $warn_fields = rule_form::hours_to_warn_fields((int)$rule->warn_hours);
-        $current_set = $DB->get_record('asyncwatch_ruleset_rules', ['ruleid' => $id], 'rulesetid');
         $rule_form->set_data([
             'ruleid'               => $id,
             'courseid'             => $courseid,
@@ -204,7 +209,9 @@ if ($tab === 'rules' && in_array($action, ['addrule', 'editrule'])) {
             'warn_enabled'           => $warn_fields['warn_enabled'],
             'warn_value'             => $warn_fields['warn_value'],
             'warn_unit'              => $warn_fields['warn_unit'],
-            'rulesetid'              => $current_set ? (int)$current_set->rulesetid : 0,
+            'profilefield'           => $rule->profilefield ?? '',
+            'restrict_groupids'      => helper::get_rule_restrict_groupids($id),
+            'restrict_cohortids'     => helper::get_rule_restrict_cohortids($id),
         ]);
     }
 }
@@ -217,7 +224,6 @@ echo $OUTPUT->heading(get_string('manage', 'local_asyncwatch'));
 $tabs = [
     new tabobject('parts',         new moodle_url($baseurl, ['tab' => 'parts']),  get_string('tab_parts',         'local_asyncwatch')),
     new tabobject('rules',         new moodle_url($baseurl, ['tab' => 'rules']),  get_string('tab_rules',         'local_asyncwatch')),
-    new tabobject('rulesets',      new moodle_url('/local/asyncwatch/rulesets.php',      ['courseid' => $courseid]), get_string('tab_rulesets',      'local_asyncwatch')),
     new tabobject('report',        new moodle_url('/local/asyncwatch/report.php',        ['courseid' => $courseid]), get_string('tab_report',        'local_asyncwatch')),
     new tabobject('notifications', new moodle_url('/local/asyncwatch/notifications.php', ['courseid' => $courseid]), get_string('tab_notifications', 'local_asyncwatch')),
 ];
@@ -310,12 +316,11 @@ if ($tab === 'rules') {
             echo '<form method="post" action="' . $bulk_url->out(false) . '" id="rules-bulk-form">';
 
             $table = new html_table();
-            $all_setrule_ids = helper::get_all_setrule_ids($courseid);
 
             $table->head = [
                 html_writer::checkbox('selectall_rules', '1', false, '', ['id' => 'selectall-rules', 'title' => get_string('selectall')]),
                 get_string('rulename',           'local_asyncwatch'),
-                get_string('tab_rulesets',       'local_asyncwatch'),
+                get_string('restrict_header',    'local_asyncwatch'),
                 get_string('parts_required',     'local_asyncwatch'),
                 get_string('default_deadline',  'local_asyncwatch'),
                 get_string('default_warn',      'local_asyncwatch'),
@@ -363,15 +368,24 @@ if ($tab === 'rules') {
                     $warn_display = $warn_label . ' (' . userdate($warn_start, get_string('aw_datetimefmt', 'local_asyncwatch')) . ')';
                 }
 
-                $set_name = helper::get_rule_set_name_for_rule((int)$rule->id);
-                $set_badge = $set_name
-                    ? html_writer::tag('span', s($set_name), ['class' => 'badge badge-info bg-info text-white', 'style' => 'font-size:0.95em;'])
-                    : html_writer::tag('span', get_string('rule_global', 'local_asyncwatch'), ['class' => 'badge badge-secondary bg-secondary text-white', 'style' => 'font-size:0.95em;']);
+                $restrict_groupids  = helper::get_rule_restrict_groupids((int)$rule->id);
+                $restrict_cohortids = helper::get_rule_restrict_cohortids((int)$rule->id);
+                if (empty($restrict_groupids) && empty($restrict_cohortids)) {
+                    $restrict_badge = html_writer::tag('span', get_string('restrict_all', 'local_asyncwatch'),
+                        ['class' => 'badge badge-secondary bg-secondary text-white', 'style' => 'font-size:0.95em;']);
+                } else {
+                    $summary = get_string('restrict_summary', 'local_asyncwatch', (object)[
+                        'groups'  => count($restrict_groupids),
+                        'cohorts' => count($restrict_cohortids),
+                    ]);
+                    $restrict_badge = html_writer::tag('span', s($summary),
+                        ['class' => 'badge badge-info bg-info text-white', 'style' => 'font-size:0.95em;']);
+                }
 
                 $table->data[] = [
                     html_writer::checkbox('bulkids[]', $rule->id, false, '', ['class' => 'bulk-checkbox-rules']),
                     format_string($rule->name),
-                    $set_badge,
+                    $restrict_badge,
                     $rule->parts_required . ' / ' . $total_parts,
                     userdate($rule->deadline, get_string('aw_datetimefmt', 'local_asyncwatch')),
                     $warn_display,

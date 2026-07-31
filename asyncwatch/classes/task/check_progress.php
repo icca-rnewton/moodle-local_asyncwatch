@@ -87,24 +87,20 @@ class check_progress extends scheduled_task {
             $user_cohorts[$row->userid][] = (int)$row->cohortid;
         }
 
-        // ── Bulk load: rule set membership filter ─────────────────────────────
-        $set_record = $DB->get_record('asyncwatch_ruleset_rules', ['ruleid' => $rule->id], 'rulesetid');
-        $students   = $all_students;
+        // ── Restriction filter (inline on the rule — empty = everyone) ─────────
+        $restrict_groupids  = helper::get_rule_restrict_groupids((int)$rule->id);
+        $restrict_cohortids = helper::get_rule_restrict_cohortids((int)$rule->id);
+        $students = $all_students;
 
-        if ($set_record) {
-            $rulesetid     = (int)$set_record->rulesetid;
-            $set_groupids  = helper::get_ruleset_groupids($rulesetid);
-            $set_cohortids = helper::get_ruleset_cohortids($rulesetid);
-            if (empty($set_groupids) && empty($set_cohortids)) return;
-
+        if (!empty($restrict_groupids) || !empty($restrict_cohortids)) {
             // Filter students using the pre-loaded group/cohort maps — a
-            // student in EITHER a targeted group OR a targeted cohort is
-            // in scope.
+            // student in EITHER a restricted group OR a restricted cohort
+            // is in scope.
             $students = [];
             foreach ($all_students as $user) {
                 $ugroups  = $user_groups[(int)$user->id]  ?? [];
                 $ucohorts = $user_cohorts[(int)$user->id] ?? [];
-                if (array_intersect($ugroups, $set_groupids) || array_intersect($ucohorts, $set_cohortids)) {
+                if (array_intersect($ugroups, $restrict_groupids) || array_intersect($ucohorts, $restrict_cohortids)) {
                     $students[$user->id] = $user;
                 }
             }
@@ -154,6 +150,18 @@ class check_progress extends scheduled_task {
         // ── Bulk load: all user progress at once (3 queries regardless of cohort size) ──
         $all_progress = helper::bulk_get_user_progress($courseid, array_keys($students));
 
+        // ── Bulk load: profile field sync state, if this rule targets one ─────
+        $profile_fieldid = null;
+        $profile_data    = [];
+        if (!empty($rule->profilefield)) {
+            $profile_fieldid = helper::get_profile_field_id($rule->profilefield);
+            if ($profile_fieldid) {
+                $profile_data = helper::bulk_get_profile_field_data($profile_fieldid, array_keys($students));
+            } else {
+                mtrace("  AsyncWatch: rule {$rule->id} targets profile field '{$rule->profilefield}' which no longer exists — skipping sync.");
+            }
+        }
+
         // ── Staff digest state ──────────────────────────────────────────────────
         // Staff notifications are now a single "report" email per rule per run
         // (with a CSV of affected students attached) rather than one email per
@@ -183,6 +191,18 @@ class check_progress extends scheduled_task {
             $progress = $all_progress[$userid] ?? ['completed' => 0, 'total' => 0, 'parts' => []];
             $done     = $progress['completed'];
             $deadline = $eff['deadline'] ?? $rule->deadline;
+
+            // Profile field sync — write the status label only if it has
+            // actually changed since last run.
+            if ($profile_fieldid) {
+                $status   = helper::status_for_progress($rule, $done, $now, $deadline, $eff['warn_hours'] ?? 0);
+                $label    = get_string('status_' . $status, 'local_asyncwatch');
+                $existing = $profile_data[$userid] ?? null;
+                if (!$existing || $existing->data !== $label) {
+                    helper::write_profile_field_value($userid, $profile_fieldid, $label, $existing);
+                    mtrace("  AsyncWatch: profile field '{$rule->profilefield}' → \"{$label}\" for user {$userid} (rule {$rule->id})");
+                }
+            }
 
             // Learner emails stay individual and personalised.
             $this->maybe_send_learner_breach(
@@ -364,6 +384,18 @@ class check_progress extends scheduled_task {
         $warning_digest_sent = $want_warning_digest
             && helper::global_notification_already_sent($ruleid, 0, 'warning_staff');
 
+        // ── Bulk load: profile field sync state, if this rule targets one ─────
+        $profile_fieldid = null;
+        $profile_data    = [];
+        if (!empty($rule->profilefield)) {
+            $profile_fieldid = helper::get_profile_field_id($rule->profilefield);
+            if ($profile_fieldid) {
+                $profile_data = helper::bulk_get_profile_field_data($profile_fieldid, $userids);
+            } else {
+                mtrace("  AsyncWatch: global rule {$ruleid} targets profile field '{$rule->profilefield}' which no longer exists — skipping sync.");
+            }
+        }
+
         $breach_rows  = [];
         $warning_rows = [];
 
@@ -383,6 +415,18 @@ class check_progress extends scheduled_task {
             }
             $deadline   = $best ? (int)$best->deadline   : (int)$rule->deadline;
             $warn_hours = $best ? (int)$best->warn_hours : (int)$rule->warn_hours;
+
+            // Profile field sync — write the status label only if it has
+            // actually changed since last run.
+            if ($profile_fieldid) {
+                $status   = helper::status_for_progress($rule, $done, $now, $deadline, $warn_hours);
+                $label    = get_string('status_' . $status, 'local_asyncwatch');
+                $existing = $profile_data[$uid] ?? null;
+                if (!$existing || $existing->data !== $label) {
+                    helper::write_profile_field_value((int)$uid, $profile_fieldid, $label, $existing);
+                    mtrace("  AsyncWatch: profile field '{$rule->profilefield}' → \"{$label}\" for user {$uid} (global rule {$ruleid})");
+                }
+            }
 
             $this->maybe_send_global_learner_breach(
                 $rule, $user, $done, $total, $now, $deadline, $already_sent, $site_name, $courses_str

@@ -361,5 +361,145 @@ function xmldb_local_asyncwatch_upgrade($oldversion) {
         upgrade_plugin_savepoint(true, 2026072309, 'local', 'asyncwatch');
     }
 
+    if ($oldversion < 2026072401) {
+
+        // Profile field sync — a rule can optionally write its computed
+        // status (On track / At risk / Behind / Completed) into a user
+        // profile custom field. Additive only, same shape on both rule
+        // tables.
+
+        $table = new xmldb_table('asyncwatch_rules');
+        $field = new xmldb_field(
+            'profilefield', XMLDB_TYPE_CHAR, '100', null,
+            XMLDB_NOTNULL, null, '', 'notify_staff_warning'
+        );
+        if (!$dbman->field_exists($table, $field)) {
+            $dbman->add_field($table, $field);
+        }
+
+        $table = new xmldb_table('asyncwatch_global_rules');
+        $field = new xmldb_field(
+            'profilefield', XMLDB_TYPE_CHAR, '100', null,
+            XMLDB_NOTNULL, null, '', 'notify_staff_warning'
+        );
+        if (!$dbman->field_exists($table, $field)) {
+            $dbman->add_field($table, $field);
+        }
+
+        upgrade_plugin_savepoint(true, 2026072401, 'local', 'asyncwatch');
+    }
+
+    if ($oldversion < 2026072500) {
+
+        // Rule Sets retired — restriction moves inline onto the rule
+        // itself (matching how cross-course rules already work), rather
+        // than through a separate named-set object. Migrate any existing
+        // set-assignment data across before dropping the old tables.
+
+        // 1. New tables.
+        $table = new xmldb_table('asyncwatch_rule_restrict_groups');
+        $table->add_field('id',      XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, XMLDB_SEQUENCE);
+        $table->add_field('ruleid',  XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL);
+        $table->add_field('groupid', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL);
+        $table->add_key('primary', XMLDB_KEY_PRIMARY, ['id']);
+        if (!$dbman->table_exists($table)) {
+            $dbman->create_table($table);
+        }
+        $index = new xmldb_index('uniq_ruleid_groupid', XMLDB_INDEX_UNIQUE, ['ruleid', 'groupid']);
+        if (!$dbman->index_exists($table, $index)) {
+            $dbman->add_index($table, $index);
+        }
+
+        $table = new xmldb_table('asyncwatch_rule_restrict_cohorts');
+        $table->add_field('id',       XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, XMLDB_SEQUENCE);
+        $table->add_field('ruleid',   XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL);
+        $table->add_field('cohortid', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL);
+        $table->add_key('primary', XMLDB_KEY_PRIMARY, ['id']);
+        if (!$dbman->table_exists($table)) {
+            $dbman->create_table($table);
+        }
+        $index = new xmldb_index('uniq_ruleid_cohortid', XMLDB_INDEX_UNIQUE, ['ruleid', 'cohortid']);
+        if (!$dbman->index_exists($table, $index)) {
+            $dbman->add_index($table, $index);
+        }
+
+        // 2. Migrate: for every rule that was assigned to a Rule Set, copy
+        //    that set's groups/cohorts directly onto the rule.
+        $old_rulesets_table = new xmldb_table('asyncwatch_ruleset_rules');
+        if ($dbman->table_exists($old_rulesets_table)) {
+            $assignments = $DB->get_records('asyncwatch_ruleset_rules');
+            foreach ($assignments as $a) {
+                $groupids = $DB->get_records('asyncwatch_ruleset_groups', ['rulesetid' => $a->rulesetid], '', 'groupid');
+                foreach ($groupids as $g) {
+                    if (!$DB->record_exists('asyncwatch_rule_restrict_groups', ['ruleid' => $a->ruleid, 'groupid' => $g->groupid])) {
+                        $DB->insert_record('asyncwatch_rule_restrict_groups', (object)[
+                            'ruleid' => $a->ruleid, 'groupid' => $g->groupid,
+                        ]);
+                    }
+                }
+                $cohortids = $DB->get_records('asyncwatch_ruleset_cohorts', ['rulesetid' => $a->rulesetid], '', 'cohortid');
+                foreach ($cohortids as $c) {
+                    if (!$DB->record_exists('asyncwatch_rule_restrict_cohorts', ['ruleid' => $a->ruleid, 'cohortid' => $c->cohortid])) {
+                        $DB->insert_record('asyncwatch_rule_restrict_cohorts', (object)[
+                            'ruleid' => $a->ruleid, 'cohortid' => $c->cohortid,
+                        ]);
+                    }
+                }
+            }
+        }
+
+        // 3. Drop the old Rule Set tables — order matters (children first).
+        $drop_tables = [
+            'asyncwatch_ruleset_cohorts',
+            'asyncwatch_ruleset_groups',
+            'asyncwatch_ruleset_rules',
+            'asyncwatch_rule_sets',
+        ];
+        foreach ($drop_tables as $tname) {
+            $t = new xmldb_table($tname);
+            if ($dbman->table_exists($t)) {
+                $dbman->drop_table($t);
+            }
+        }
+
+        upgrade_plugin_savepoint(true, 2026072500, 'local', 'asyncwatch');
+    }
+
+    if ($oldversion < 2026072600) {
+
+        // Close a schema gap: asyncwatch_rule_overrides (group overrides)
+        // never got the unique (ruleid, groupid) constraint that its
+        // cohort and global siblings already have. Nothing currently stops
+        // duplicate override rows for the same group on the same rule, so
+        // de-duplicate first (keep the most lenient/latest deadline, same
+        // "best deadline wins" rule used everywhere else in this plugin)
+        // before the index is added, or a site with an existing duplicate
+        // would fail the upgrade outright.
+
+        $duplicate_groups = $DB->get_records_sql(
+            "SELECT ruleid, groupid, COUNT(*) AS cnt
+               FROM {asyncwatch_rule_overrides}
+              GROUP BY ruleid, groupid
+             HAVING COUNT(*) > 1"
+        );
+
+        foreach ($duplicate_groups as $dup) {
+            $rows = $DB->get_records('asyncwatch_rule_overrides',
+                ['ruleid' => $dup->ruleid, 'groupid' => $dup->groupid], 'deadline DESC');
+            $keep = array_shift($rows); // Latest deadline wins — keep it.
+            foreach ($rows as $extra) {
+                $DB->delete_records('asyncwatch_rule_overrides', ['id' => $extra->id]);
+            }
+        }
+
+        $table = new xmldb_table('asyncwatch_rule_overrides');
+        $index = new xmldb_index('uniq_ruleid_groupid', XMLDB_INDEX_UNIQUE, ['ruleid', 'groupid']);
+        if (!$dbman->index_exists($table, $index)) {
+            $dbman->add_index($table, $index);
+        }
+
+        upgrade_plugin_savepoint(true, 2026072600, 'local', 'asyncwatch');
+    }
+
     return true;
 }

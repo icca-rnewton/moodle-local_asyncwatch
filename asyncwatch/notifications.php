@@ -142,7 +142,6 @@ $manage_url = new moodle_url('/local/asyncwatch/manage.php', ['courseid' => $cou
 $tabs = [
     new tabobject('parts',         new moodle_url($manage_url, ['tab' => 'parts']),  get_string('tab_parts',         'local_asyncwatch')),
     new tabobject('rules',         new moodle_url($manage_url, ['tab' => 'rules']),  get_string('tab_rules',         'local_asyncwatch')),
-    new tabobject('rulesets',      new moodle_url('/local/asyncwatch/rulesets.php',      ['courseid' => $courseid]), get_string('tab_rulesets',      'local_asyncwatch')),
     new tabobject('report',        new moodle_url('/local/asyncwatch/report.php',        ['courseid' => $courseid]), get_string('tab_report',        'local_asyncwatch')),
     new tabobject('notifications', $pageurl, get_string('tab_notifications', 'local_asyncwatch')),
 ];

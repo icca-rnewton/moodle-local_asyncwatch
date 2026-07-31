@@ -53,6 +53,7 @@
         <FIELD NAME="notify_staff_breach" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="0"/>
         <FIELD NAME="notify_learner_warning" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="0"/>
         <FIELD NAME="notify_staff_warning" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="0"/>
+        <FIELD NAME="profilefield" TYPE="char" LENGTH="100" NOTNULL="true" DEFAULT="" COMMENT="Shortname of a user profile custom field to sync this rule's status into; empty = disabled"/>
         <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"/>
         <FIELD NAME="timemodified" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"/>
       </FIELDS>
@@ -115,50 +116,35 @@
     </TABLE>
 
 
-    <TABLE NAME="asyncwatch_rule_sets" COMMENT="Named rule sets per course">
+    <TABLE NAME="asyncwatch_rule_restrict_groups" COMMENT="Course groups a rule is restricted to; empty = applies to everyone enrolled">
       <FIELDS>
         <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
-        <FIELD NAME="courseid" TYPE="int" LENGTH="10" NOTNULL="true"/>
-        <FIELD NAME="name" TYPE="char" LENGTH="255" NOTNULL="true"/>
-        <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"/>
-        <FIELD NAME="timemodified" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"/>
-      </FIELDS>
-      <KEYS>
-        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
-        <KEY NAME="fk_course" TYPE="foreign" FIELDS="courseid" REFTABLE="course" REFFIELDS="id"/>
-      </KEYS>
-    </TABLE>
-
-    <TABLE NAME="asyncwatch_ruleset_rules" COMMENT="Rules belonging to a rule set">
-      <FIELDS>
-        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
-        <FIELD NAME="rulesetid" TYPE="int" LENGTH="10" NOTNULL="true"/>
         <FIELD NAME="ruleid" TYPE="int" LENGTH="10" NOTNULL="true"/>
-      </FIELDS>
-      <KEYS>
-        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
-        <KEY NAME="fk_ruleset" TYPE="foreign" FIELDS="rulesetid" REFTABLE="asyncwatch_rule_sets" REFFIELDS="id"/>
-        <KEY NAME="fk_rule" TYPE="foreign" FIELDS="ruleid" REFTABLE="asyncwatch_rules" REFFIELDS="id"/>
-      </KEYS>
-      <INDEXES>
-        <INDEX NAME="uniq_ruleid" UNIQUE="true" FIELDS="ruleid" COMMENT="A rule can belong to at most one rule set"/>
-        <INDEX NAME="uniq_rulesetid_ruleid" UNIQUE="true" FIELDS="rulesetid,ruleid"/>
-      </INDEXES>
-    </TABLE>
-
-    <TABLE NAME="asyncwatch_ruleset_groups" COMMENT="Course groups assigned to a rule set">
-      <FIELDS>
-        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
-        <FIELD NAME="rulesetid" TYPE="int" LENGTH="10" NOTNULL="true"/>
         <FIELD NAME="groupid" TYPE="int" LENGTH="10" NOTNULL="true"/>
       </FIELDS>
       <KEYS>
         <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
-        <KEY NAME="fk_ruleset" TYPE="foreign" FIELDS="rulesetid" REFTABLE="asyncwatch_rule_sets" REFFIELDS="id"/>
+        <KEY NAME="fk_rule" TYPE="foreign" FIELDS="ruleid" REFTABLE="asyncwatch_rules" REFFIELDS="id"/>
         <KEY NAME="fk_group" TYPE="foreign" FIELDS="groupid" REFTABLE="groups" REFFIELDS="id"/>
       </KEYS>
       <INDEXES>
-        <INDEX NAME="uniq_rulesetid_groupid" UNIQUE="true" FIELDS="rulesetid,groupid"/>
+        <INDEX NAME="uniq_ruleid_groupid" UNIQUE="true" FIELDS="ruleid,groupid"/>
+      </INDEXES>
+    </TABLE>
+
+    <TABLE NAME="asyncwatch_rule_restrict_cohorts" COMMENT="Cohorts a rule is restricted to; empty = applies to everyone enrolled">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="ruleid" TYPE="int" LENGTH="10" NOTNULL="true"/>
+        <FIELD NAME="cohortid" TYPE="int" LENGTH="10" NOTNULL="true"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+        <KEY NAME="fk_rule" TYPE="foreign" FIELDS="ruleid" REFTABLE="asyncwatch_rules" REFFIELDS="id"/>
+        <KEY NAME="fk_cohort" TYPE="foreign" FIELDS="cohortid" REFTABLE="cohort" REFFIELDS="id"/>
+      </KEYS>
+      <INDEXES>
+        <INDEX NAME="uniq_ruleid_cohortid" UNIQUE="true" FIELDS="ruleid,cohortid"/>
       </INDEXES>
     </TABLE>
 
@@ -178,30 +164,18 @@
         <KEY NAME="fk_rule" TYPE="foreign" FIELDS="ruleid" REFTABLE="asyncwatch_rules" REFFIELDS="id"/>
         <KEY NAME="fk_group" TYPE="foreign" FIELDS="groupid" REFTABLE="groups" REFFIELDS="id"/>
       </KEYS>
+      <INDEXES>
+        <INDEX NAME="uniq_ruleid_groupid" UNIQUE="true" FIELDS="ruleid,groupid"/>
+      </INDEXES>
     </TABLE>
 
     <!-- ================================================================
          Cohort targeting for course-level rules — parallel to the group
-         tables above. A rule set can now target course groups AND/OR
-         cohorts (union of both); a rule's deadline can be overridden by
-         group AND/OR cohort, with the best (latest) deadline winning.
+         tables above. A rule's Restrictions can target course groups
+         AND/OR cohorts (union of both); a rule's deadline can be
+         overridden by group AND/OR cohort, with the best (latest)
+         deadline winning.
     ================================================================ -->
-
-    <TABLE NAME="asyncwatch_ruleset_cohorts" COMMENT="Cohorts assigned to a rule set">
-      <FIELDS>
-        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
-        <FIELD NAME="rulesetid" TYPE="int" LENGTH="10" NOTNULL="true"/>
-        <FIELD NAME="cohortid" TYPE="int" LENGTH="10" NOTNULL="true"/>
-      </FIELDS>
-      <KEYS>
-        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
-        <KEY NAME="fk_ruleset" TYPE="foreign" FIELDS="rulesetid" REFTABLE="asyncwatch_rule_sets" REFFIELDS="id"/>
-        <KEY NAME="fk_cohort" TYPE="foreign" FIELDS="cohortid" REFTABLE="cohort" REFFIELDS="id"/>
-      </KEYS>
-      <INDEXES>
-        <INDEX NAME="uniq_rulesetid_cohortid" UNIQUE="true" FIELDS="rulesetid,cohortid"/>
-      </INDEXES>
-    </TABLE>
 
     <TABLE NAME="asyncwatch_rule_cohort_overrides" COMMENT="Per-cohort deadline overrides for a course-level rule">
       <FIELDS>
@@ -243,6 +217,7 @@
         <FIELD NAME="notify_staff_breach" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="0"/>
         <FIELD NAME="notify_learner_warning" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="0"/>
         <FIELD NAME="notify_staff_warning" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="0"/>
+        <FIELD NAME="profilefield" TYPE="char" LENGTH="100" NOTNULL="true" DEFAULT="" COMMENT="Shortname of a user profile custom field to sync this rule's status into; empty = disabled"/>
         <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"/>
         <FIELD NAME="timemodified" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"/>
       </FIELDS>

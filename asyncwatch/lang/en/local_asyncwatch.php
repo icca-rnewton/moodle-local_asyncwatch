@@ -326,34 +326,21 @@ $string['partdeleted_rules_warning']  = 'Note: existing rules may need updating 
 
 $string['tpl_reset'] = 'Reset to default';
 
-// Rule Sets
-$string['tab_rulesets']                = 'Rule Sets';
-$string['rulesets_intro']              = 'Rule Sets let you apply different rules to different groups of learners within this course. Assign rules to a set, then assign course groups to that set — learners in those groups will only be evaluated against the rules in their set. Rules not assigned to any set are <strong>global</strong> and always apply to all learners regardless of whether Rule Sets exist. Rule Sets are optional — if none are defined, all rules behave as global.';
-$string['rulesets_nogroups_warning']   = 'This course has no groups. You need to create course groups before you can assign them to Rule Sets. Visit Course Settings → Groups to create them.';
-$string['addruleset']                  = 'Add Rule Set';
-$string['editruleset']                 = 'Edit Rule Set';
-$string['rulesetname']                 = 'Rule Set name';
-$string['ruleset_rules']               = 'Rules in this set';
-$string['ruleset_rules_desc']          = 'Select which rules belong to this set. A rule can only belong to one set at a time.';
-$string['ruleset_groups']              = 'Course groups';
-$string['ruleset_groups_desc']         = 'Select which course groups this rule set applies to. Global rules (not assigned to any set) still apply to all learners regardless of these assignments.';
-$string['ruleset_cohorts']             = 'Cohorts';
-$string['ruleset_cohorts_desc']        = 'Optionally, also select site cohorts this rule set applies to — a learner in either a selected group or a selected cohort is in scope.';
-$string['ruleset_nocohorts']           = 'No cohorts exist on this site yet.';
-$string['norulesets']                  = 'No Rule Sets have been defined yet. Click "Add Rule Set" to get started.';
-$string['rulesetsaved']                = 'Rule Set saved successfully.';
-$string['rulesetdeleted']              = 'Rule Set deleted successfully.';
-$string['rulesetdeleteconfirm']        = 'Are you sure you want to delete this Rule Set? The rules and groups will be unassigned but not deleted.';
-$string['ruleset_name_duplicate']      = 'A Rule Set with this name already exists in this course.';
 $string['rule_global']                 = 'Global';
-$string['ruleset_assignment_header']   = 'Rule Set';
 $string['rule_params_header']          = 'Rule Parameters';
-$string['ruleset_global_note']         = 'If this rule is not assigned to a Rule Set it will be <strong>global</strong> — applying to all learners at all times, regardless of whether other Rule Sets exist in this course.';
-$string['ruleset_none']                = '— No set (global) —';
-$string['ruleset_assign']              = 'Assign to Rule Set';
-$string['ruleset_assign_help']         = 'Optionally assign this rule to a Rule Set. Rules in a set only apply to learners in that set\'s course groups. Rules not in any set are global.';
-$string['filter_ruleset']              = 'Rule Set';
-$string['filter_ruleset_all']          = 'All Rule Sets';
+
+// Restrictions (group/cohort audience targeting, inline on the rule itself)
+$string['restrict_header']             = 'Restrictions';
+$string['restrict_desc']               = 'Leave both empty to apply this rule to everyone enrolled. Select specific groups and/or cohorts to restrict it to only those learners — a learner in either a selected group or a selected cohort is in scope.';
+$string['restrict_groups']             = 'Course groups';
+$string['restrict_cohorts']            = 'Cohorts';
+$string['restrict_all']                = 'All learners';
+$string['restrict_summary']            = '{$a->groups} group(s), {$a->cohorts} cohort(s)';
+$string['profilefield_header']         = 'Profile Field Sync';
+$string['profilefield_desc']           = 'Optionally write this rule\'s status (On track / At risk / Behind / Completed) into a user profile custom field whenever it changes. If more than one rule targets the same field for a learner, whichever rule the scheduled task processes last in a given run decides the value.';
+$string['profilefield']                = 'Update profile field';
+$string['profilefield_help']           = 'Only text and dropdown-type custom profile fields are listed. The field must already exist — create it under Site administration → Users → User profile fields. The value is updated during the scheduled task run, and only written when the status has actually changed.';
+$string['profilefield_none']           = '— Don\'t update a profile field —';
 
 // Group overrides
 $string['overrides_title']          = 'Group Deadline Overrides';
@@ -364,9 +351,11 @@ $string['addoverride']              = 'Add group override';
 $string['addoverride_cohort']       = 'Add cohort override';
 $string['editoverride']             = 'Edit group override';
 $string['nooverrides']              = 'No group overrides defined. The default rule deadline applies to all learners.';
+$string['nooverrides_cohort']       = 'No cohort overrides defined. The default rule deadline applies to all learners.';
 $string['overridesaved']            = 'Override saved successfully.';
 $string['overridedeleted']          = 'Override deleted.';
 $string['overridedeleteconfirm']    = 'Delete this group override? The group will revert to the default deadline.';
+$string['overridedeleteconfirm_cohort'] = 'Delete this cohort override? The cohort will revert to the default deadline.';
 $string['override_default_deadline']= 'Default deadline';
 $string['override_default_desc']    = 'Groups without an override use this deadline and warning.';
 $string['override_deadline']        = 'Override Deadline';
@@ -482,3 +471,18 @@ $string['autoparts_excluded']        = 'Excluded (tracking off — shown for ref
 $string['autoparts_tracking_off']    = 'tracking off';
 
 $string['autoparts_col_detail'] = 'Activities';
+
+// Privacy API metadata
+$string['privacy:metadata:asyncwatch_notifications']          = 'A log of warning and breach notification emails sent by AsyncWatch for course-level rules.';
+$string['privacy:metadata:asyncwatch_notifications:ruleid']   = 'The rule that triggered this notification.';
+$string['privacy:metadata:asyncwatch_notifications:userid']   = 'The learner this notification was sent about.';
+$string['privacy:metadata:asyncwatch_notifications:type']     = 'The type of notification (e.g. learner warning, staff breach digest).';
+$string['privacy:metadata:asyncwatch_notifications:timesent'] = 'The time the notification was sent.';
+$string['privacy:metadata:asyncwatch_global_notifications']          = 'A log of warning and breach notification emails sent by AsyncWatch for cross-course rules.';
+$string['privacy:metadata:asyncwatch_global_notifications:ruleid']   = 'The cross-course rule that triggered this notification.';
+$string['privacy:metadata:asyncwatch_global_notifications:userid']   = 'The learner this notification was sent about.';
+$string['privacy:metadata:asyncwatch_global_notifications:type']     = 'The type of notification (e.g. learner warning, staff breach digest).';
+$string['privacy:metadata:asyncwatch_global_notifications:timesent'] = 'The time the notification was sent.';
+$string['privacy:metadata:user_info_data']         = 'AsyncWatch can write a learner\'s computed status (On track / At risk / Behind / Completed) into a Moodle user profile custom field you choose. This is a core Moodle table with its own privacy provider — AsyncWatch only ever writes to it.';
+$string['privacy:metadata:user_info_data:userid']  = 'The learner whose profile field is being updated.';
+$string['privacy:metadata:user_info_data:data']    = 'The status label written into the chosen profile field.';

@@ -134,167 +134,43 @@ class rule_form extends \moodleform {
             get_string('notify_staff', 'local_asyncwatch'), '');
         $mform->setDefault('notify_staff_warning', 0);
 
-        // ── Rule Set assignment ──────────────────────────────────────────────
-        $mform->addElement('header', 'ruleset_header',
-            get_string('ruleset_assignment_header', 'local_asyncwatch'));
-
-        $mform->addElement('static', 'ruleset_global_note', '',
+        // ── Profile field sync ──────────────────────────────────────────────
+        $mform->addElement('header', 'profilefield_header',
+            get_string('profilefield_header', 'local_asyncwatch'));
+        $mform->addElement('static', 'profilefield_desc', '',
             \html_writer::tag('p',
-                get_string('ruleset_global_note', 'local_asyncwatch'),
+                get_string('profilefield_desc', 'local_asyncwatch'),
+                ['class' => 'text-muted small mb-2']
+            )
+        );
+        $field_options = ['' => get_string('profilefield_none', 'local_asyncwatch')]
+            + ($this->_customdata['profile_field_options'] ?? []);
+        $mform->addElement('select', 'profilefield',
+            get_string('profilefield', 'local_asyncwatch'), $field_options);
+        $mform->setType('profilefield', PARAM_ALPHANUMEXT);
+        $mform->addHelpButton('profilefield', 'profilefield', 'local_asyncwatch');
+
+        // ── Restrictions ─────────────────────────────────────────────────────
+        $mform->addElement('header', 'restrict_header',
+            get_string('restrict_header', 'local_asyncwatch'));
+        $mform->addElement('static', 'restrict_desc', '',
+            \html_writer::tag('p',
+                get_string('restrict_desc', 'local_asyncwatch'),
                 ['class' => 'text-muted small mb-2']
             )
         );
 
-        // Hidden field that Moodle's form processor reads on submit.
-        // Kept before the widget so the visible select (which posts last) wins
-        // in practice, but we also sync it via JS to be safe.
-        $mform->addElement('hidden', 'rulesetid', 0);
-        $mform->setType('rulesetid', PARAM_INT);
+        $group_options = $this->_customdata['group_options'] ?? [];
+        $el = $mform->addElement('autocomplete', 'restrict_groupids',
+            get_string('restrict_groups', 'local_asyncwatch'), $group_options);
+        $el->setMultiple(true);
+        $mform->setType('restrict_groupids', PARAM_INT);
 
-        // Rule Set selector + inline "New rule set" creator.
-        // Rendered as a static HTML block so we can place the "+ New" button
-        // right next to the select without fighting moodleform's layout.
-        $courseid_for_sets = (int)($this->_customdata['courseid'] ?? 0);
-        $existing_sets     = $courseid_for_sets
-            ? \local_asyncwatch\helper::get_rule_sets($courseid_for_sets)
-            : [];
-
-        $current_rulesetid = (int)($this->_customdata['current_rulesetid'] ?? 0);
-
-        $opts_html = '<option value="0">' . s(get_string('ruleset_none', 'local_asyncwatch')) . '</option>';
-        foreach ($existing_sets as $rs) {
-            $sel = ((int)$rs->id === $current_rulesetid) ? ' selected' : '';
-            $opts_html .= '<option value="' . (int)$rs->id . '"' . $sel . '>' . s(format_string($rs->name)) . '</option>';
-        }
-
-        $ajax_url = (new \moodle_url('/local/asyncwatch/ajax_create_ruleset.php'))->out(false);
-
-        $ruleset_html = '
-<div id="aw-ruleset-wrapper">
-  <div class="d-flex align-items-center" style="gap:0.5rem;flex-wrap:wrap;">
-    <select id="aw-rulesetid-vis" class="custom-select" style="width:auto;min-width:200px;">'
-      . $opts_html .
-    '</select>
-    <button type="button" id="aw-new-ruleset-btn" class="btn btn-secondary">+ New rule set</button>
-  </div>
-
-  <!-- Inline create form — hidden until button clicked -->
-  <div id="aw-new-ruleset-form" style="display:none;margin-top:0.6rem;padding:0.75rem 1rem;background:#f8f9fa;border:1px solid #dee2e6;border-radius:4px;max-width:420px;">
-    <label class="font-weight-bold small mb-1 d-block" for="aw-new-ruleset-name">New rule set name</label>
-    <div class="d-flex align-items-center" style="gap:0.5rem;">
-      <input type="text" id="aw-new-ruleset-name" class="form-control form-control-sm" placeholder="e.g. Group A rules" maxlength="255" style="flex:1;">
-      <button type="button" id="aw-new-ruleset-save" class="btn btn-primary">Save</button>
-      <button type="button" id="aw-new-ruleset-cancel" class="btn btn-secondary">Cancel</button>
-    </div>
-    <div id="aw-new-ruleset-error" class="text-danger small mt-1" style="display:none;"></div>
-  </div>
-</div>
-
-<script>
-(function() {
-    var ajaxUrl = ' . json_encode($ajax_url) . ';
-    var sesskey = ' . json_encode(sesskey()) . ';
-    var courseid = ' . (int)$courseid_for_sets . ';
-
-    function byId(id) { return document.getElementById(id); }
-
-    document.addEventListener("DOMContentLoaded", function() {
-        var visSelect = byId("aw-rulesetid-vis");
-        var hidField  = byId("id_rulesetid");
-        var btn       = byId("aw-new-ruleset-btn");
-        var form      = byId("aw-new-ruleset-form");
-        var nameInp   = byId("aw-new-ruleset-name");
-        var saveBtn   = byId("aw-new-ruleset-save");
-        var cancelBtn = byId("aw-new-ruleset-cancel");
-        var errDiv    = byId("aw-new-ruleset-error");
-        if (!btn || !visSelect) return;
-
-        // Keep hidden field in sync so Moodle form processor gets the value.
-        function syncHidden() {
-            if (hidField) hidField.value = visSelect.value;
-        }
-        visSelect.addEventListener("change", syncHidden);
-        syncHidden(); // sync on load
-
-        btn.addEventListener("click", function() {
-            form.style.display = "";
-            nameInp.value = "";
-            errDiv.style.display = "none";
-            nameInp.focus();
-        });
-
-        cancelBtn.addEventListener("click", function() {
-            form.style.display = "none";
-        });
-
-        nameInp.addEventListener("keydown", function(e) {
-            if (e.key === "Enter")  { e.preventDefault(); saveBtn.click(); }
-            if (e.key === "Escape") { cancelBtn.click(); }
-        });
-
-        saveBtn.addEventListener("click", function() {
-            var name = nameInp.value.trim();
-            if (!name) {
-                errDiv.textContent = "Please enter a name.";
-                errDiv.style.display = "";
-                nameInp.focus();
-                return;
-            }
-
-            saveBtn.disabled    = true;
-            saveBtn.textContent = "Saving\u2026";
-            errDiv.style.display = "none";
-
-            fetch(ajaxUrl, {
-                method: "POST",
-                body: new URLSearchParams({ courseid: courseid, name: name, sesskey: sesskey })
-            })
-            .then(function(r) { return r.json(); })
-            .then(function(data) {
-                if (data.error) {
-                    errDiv.textContent   = data.error;
-                    errDiv.style.display = "";
-                    saveBtn.disabled     = false;
-                    saveBtn.textContent  = "Save";
-                    return;
-                }
-                // Add option and select it in both visible + hidden.
-                var opt = document.createElement("option");
-                opt.value       = data.id;
-                opt.textContent = data.name;
-                visSelect.appendChild(opt);
-                visSelect.value = data.id;
-                syncHidden();
-
-                // Tidy up.
-                form.style.display  = "none";
-                saveBtn.disabled    = false;
-                saveBtn.textContent = "Save";
-
-                // Brief ✓ confirmation.
-                var tick = document.createElement("span");
-                tick.textContent = "\u2713 Created";
-                tick.className   = "text-success small ml-2";
-                tick.style.transition = "opacity 1s";
-                btn.parentNode.appendChild(tick);
-                setTimeout(function() { tick.style.opacity = "0"; }, 1500);
-                setTimeout(function() { tick.remove(); },            2600);
-            })
-            .catch(function() {
-                errDiv.textContent   = "An error occurred. Please try again.";
-                errDiv.style.display = "";
-                saveBtn.disabled     = false;
-                saveBtn.textContent  = "Save";
-            });
-        });
-    });
-})();
-</script>';
-
-        $mform->addElement('static', 'rulesetid_widget',
-            get_string('ruleset_assign', 'local_asyncwatch'),
-            $ruleset_html
-        );
+        $cohort_options = $this->_customdata['cohort_options'] ?? [];
+        $el = $mform->addElement('autocomplete', 'restrict_cohortids',
+            get_string('restrict_cohorts', 'local_asyncwatch'), $cohort_options);
+        $el->setMultiple(true);
+        $mform->setType('restrict_cohortids', PARAM_INT);
 
         $this->add_action_buttons(true, get_string('savechanges'));
     }

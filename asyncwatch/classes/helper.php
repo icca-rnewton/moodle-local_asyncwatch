@@ -131,11 +131,12 @@ class helper {
      */
     public static function delete_rule(int $ruleid): void {
         global $DB;
-        $DB->delete_records('asyncwatch_notifications',       ['ruleid' => $ruleid]);
-        $DB->delete_records('asyncwatch_ruleset_rules',       ['ruleid' => $ruleid]);
-        $DB->delete_records('asyncwatch_rule_overrides',      ['ruleid' => $ruleid]);
+        $DB->delete_records('asyncwatch_notifications',         ['ruleid' => $ruleid]);
+        $DB->delete_records('asyncwatch_rule_restrict_groups',  ['ruleid' => $ruleid]);
+        $DB->delete_records('asyncwatch_rule_restrict_cohorts', ['ruleid' => $ruleid]);
+        $DB->delete_records('asyncwatch_rule_overrides',        ['ruleid' => $ruleid]);
         $DB->delete_records('asyncwatch_rule_cohort_overrides', ['ruleid' => $ruleid]);
-        $DB->delete_records('asyncwatch_rules',               ['id'     => $ruleid]);
+        $DB->delete_records('asyncwatch_rules',                 ['id'     => $ruleid]);
     }
 
     // -------------------------------------------------------------------------
@@ -966,160 +967,41 @@ class helper {
     }
 
     // -------------------------------------------------------------------------
-    // RULE SETS
+    // RESTRICTIONS
+    //
+    // A rule can optionally be restricted to specific course groups and/or
+    // cohorts — a learner in EITHER a restricted group OR a restricted
+    // cohort is in scope. Empty (no restrictions at all) = applies to
+    // everyone enrolled. This mirrors how cross-course rule cohort
+    // targeting already works (see get_global_rule_cohortids()).
     // -------------------------------------------------------------------------
 
-    public static function get_rule_sets(int $courseid): array {
+    public static function get_rule_restrict_groupids(int $ruleid): array {
         global $DB;
-        return $DB->get_records('asyncwatch_rule_sets', ['courseid' => $courseid], 'name ASC');
-    }
-
-    public static function get_rule_set(int $rulesetid): \stdClass {
-        global $DB;
-        return $DB->get_record('asyncwatch_rule_sets', ['id' => $rulesetid], '*', MUST_EXIST);
-    }
-
-    public static function save_rule_set(\stdClass $data): int {
-        global $DB;
-        $now = time();
-        if (!empty($data->id)) {
-            $data->timemodified = $now;
-            $DB->update_record('asyncwatch_rule_sets', $data);
-            return (int)$data->id;
-        }
-        $data->timecreated  = $now;
-        $data->timemodified = $now;
-        return (int)$DB->insert_record('asyncwatch_rule_sets', $data);
-    }
-
-    public static function delete_rule_set(int $rulesetid): void {
-        global $DB;
-        $DB->delete_records('asyncwatch_ruleset_rules',   ['rulesetid' => $rulesetid]);
-        $DB->delete_records('asyncwatch_ruleset_groups',  ['rulesetid' => $rulesetid]);
-        $DB->delete_records('asyncwatch_ruleset_cohorts', ['rulesetid' => $rulesetid]);
-        $DB->delete_records('asyncwatch_rule_sets',       ['id'        => $rulesetid]);
-    }
-
-    public static function get_ruleset_ruleids(int $rulesetid): array {
-        global $DB;
-        $rows = $DB->get_records('asyncwatch_ruleset_rules', ['rulesetid' => $rulesetid], '', 'ruleid');
+        $rows = $DB->get_records('asyncwatch_rule_restrict_groups', ['ruleid' => $ruleid], '', 'groupid');
         return array_map('intval', array_keys($rows));
     }
 
-    public static function set_ruleset_rules(int $rulesetid, array $ruleids): void {
+    public static function set_rule_restrict_groups(int $ruleid, array $groupids): void {
         global $DB;
-        $DB->delete_records('asyncwatch_ruleset_rules', ['rulesetid' => $rulesetid]);
-        foreach (array_unique($ruleids) as $rid) {
-            $DB->insert_record('asyncwatch_ruleset_rules', (object)['rulesetid' => $rulesetid, 'ruleid' => (int)$rid]);
+        $DB->delete_records('asyncwatch_rule_restrict_groups', ['ruleid' => $ruleid]);
+        foreach (array_unique(array_map('intval', $groupids)) as $gid) {
+            $DB->insert_record('asyncwatch_rule_restrict_groups', (object)['ruleid' => $ruleid, 'groupid' => $gid]);
         }
     }
 
-    public static function get_ruleset_groupids(int $rulesetid): array {
+    public static function get_rule_restrict_cohortids(int $ruleid): array {
         global $DB;
-        $rows = $DB->get_records('asyncwatch_ruleset_groups', ['rulesetid' => $rulesetid], '', 'groupid');
+        $rows = $DB->get_records('asyncwatch_rule_restrict_cohorts', ['ruleid' => $ruleid], '', 'cohortid');
         return array_map('intval', array_keys($rows));
     }
 
-    public static function set_ruleset_groups(int $rulesetid, array $groupids): void {
+    public static function set_rule_restrict_cohorts(int $ruleid, array $cohortids): void {
         global $DB;
-        $DB->delete_records('asyncwatch_ruleset_groups', ['rulesetid' => $rulesetid]);
-        foreach (array_unique($groupids) as $gid) {
-            $DB->insert_record('asyncwatch_ruleset_groups', (object)['rulesetid' => $rulesetid, 'groupid' => (int)$gid]);
+        $DB->delete_records('asyncwatch_rule_restrict_cohorts', ['ruleid' => $ruleid]);
+        foreach (array_unique(array_map('intval', $cohortids)) as $cid) {
+            $DB->insert_record('asyncwatch_rule_restrict_cohorts', (object)['ruleid' => $ruleid, 'cohortid' => $cid]);
         }
-    }
-
-    /**
-     * Cohorts assigned to a rule set — parallel to get_ruleset_groupids().
-     * A rule set can target course groups AND/OR cohorts; a student in
-     * either is in scope.
-     */
-    public static function get_ruleset_cohortids(int $rulesetid): array {
-        global $DB;
-        $rows = $DB->get_records('asyncwatch_ruleset_cohorts', ['rulesetid' => $rulesetid], '', 'cohortid');
-        return array_map('intval', array_keys($rows));
-    }
-
-    public static function set_ruleset_cohorts(int $rulesetid, array $cohortids): void {
-        global $DB;
-        $DB->delete_records('asyncwatch_ruleset_cohorts', ['rulesetid' => $rulesetid]);
-        foreach (array_unique($cohortids) as $cid) {
-            $DB->insert_record('asyncwatch_ruleset_cohorts', (object)['rulesetid' => $rulesetid, 'cohortid' => (int)$cid]);
-        }
-    }
-
-    /**
-     * Return the rule set IDs that a given user belongs to in a course,
-     * based on their course group membership OR cohort membership.
-     *
-     * @return int[]  Rule set IDs applicable to this user.
-     */
-    public static function get_user_rulesets(int $courseid, int $userid): array {
-        global $DB;
-
-        $rulesetids = [];
-
-        // Query group membership directly from DB to avoid stale Moodle cache.
-        $groupids = $DB->get_fieldset_sql(
-            "SELECT gm.groupid
-               FROM {groups_members} gm
-               JOIN {groups} g ON g.id = gm.groupid
-              WHERE gm.userid = :userid AND g.courseid = :courseid",
-            ['userid' => $userid, 'courseid' => $courseid]
-        );
-        if (!empty($groupids)) {
-            list($in_sql, $params) = $DB->get_in_or_equal($groupids);
-            $rows = $DB->get_records_sql(
-                "SELECT DISTINCT rulesetid FROM {asyncwatch_ruleset_groups} WHERE groupid $in_sql",
-                $params
-            );
-            $rulesetids = array_merge($rulesetids, array_map('intval', array_column($rows, 'rulesetid', 'rulesetid')));
-        }
-
-        // Cohort membership is site-wide, so no course filter needed here.
-        $cohortids = $DB->get_fieldset_sql(
-            "SELECT cohortid FROM {cohort_members} WHERE userid = :userid",
-            ['userid' => $userid]
-        );
-        if (!empty($cohortids)) {
-            list($in_sql, $params) = $DB->get_in_or_equal($cohortids);
-            $rows = $DB->get_records_sql(
-                "SELECT DISTINCT rulesetid FROM {asyncwatch_ruleset_cohorts} WHERE cohortid $in_sql",
-                $params
-            );
-            $rulesetids = array_merge($rulesetids, array_map('intval', array_column($rows, 'rulesetid', 'rulesetid')));
-        }
-
-        return array_values(array_unique($rulesetids));
-    }
-
-    /**
-     * Return all rule IDs that are assigned to ANY rule set in a course.
-     * Used to identify "set-only" rules.
-     *
-     * @return int[]
-     */
-    public static function get_all_setrule_ids(int $courseid): array {
-        global $DB;
-        $sql = "SELECT DISTINCT rr.ruleid
-                  FROM {asyncwatch_ruleset_rules} rr
-                  JOIN {asyncwatch_rule_sets} rs ON rs.id = rr.rulesetid
-                 WHERE rs.courseid = :courseid";
-        $rows = $DB->get_records_sql($sql, ['courseid' => $courseid]);
-        return array_map('intval', array_column($rows, 'ruleid', 'ruleid'));
-    }
-
-    /**
-     * Get the rule set name a rule belongs to (first match), or null if global.
-     */
-    public static function get_rule_set_name_for_rule(int $ruleid): ?string {
-        global $DB;
-        $sql = "SELECT rs.name
-                  FROM {asyncwatch_rule_sets} rs
-                  JOIN {asyncwatch_ruleset_rules} rr ON rr.rulesetid = rs.id
-                 WHERE rr.ruleid = :ruleid
-                 LIMIT 1";
-        $row = $DB->get_record_sql($sql, ['ruleid' => $ruleid]);
-        return $row ? $row->name : null;
     }
 
     // -------------------------------------------------------------------------
@@ -1242,6 +1124,92 @@ class helper {
         if ($now >= $eff_deadline) return 'breach';
         if ($eff_warn > 0 && $now >= ($eff_deadline - ($eff_warn * MINSECS))) return 'warning';
         return 'ok';
+    }
+
+    // -------------------------------------------------------------------------
+    // PROFILE FIELD SYNC
+    //
+    // A rule (course-level or cross-course) can optionally write its
+    // computed status into a user profile custom field. Only text/menu
+    // fields are offered, since the value written is always a plain
+    // status label (e.g. "On track"). Reads/writes are bulk-loaded per
+    // rule in check_progress.php, not per user, to keep the cron task
+    // fast on large cohorts.
+    // -------------------------------------------------------------------------
+
+    /**
+     * Text/menu-type user profile custom fields, suitable for status sync.
+     *
+     * @return array shortname => "Field name (shortname)"
+     */
+    public static function get_profile_field_options(): array {
+        global $DB;
+        $fields = $DB->get_records_select(
+            'user_info_field',
+            "datatype IN ('text', 'menu')",
+            null,
+            'categoryid ASC, sortorder ASC',
+            'id, shortname, name'
+        );
+        $options = [];
+        foreach ($fields as $f) {
+            $options[$f->shortname] = format_string($f->name) . ' (' . $f->shortname . ')';
+        }
+        return $options;
+    }
+
+    /**
+     * Resolve a profile field shortname to its user_info_field id.
+     */
+    public static function get_profile_field_id(string $shortname): ?int {
+        global $DB;
+        if ($shortname === '') return null;
+        $field = $DB->get_record('user_info_field', ['shortname' => $shortname], 'id');
+        return $field ? (int)$field->id : null;
+    }
+
+    /**
+     * Bulk-load existing user_info_data rows for a set of users under one
+     * field, keyed by userid. One query regardless of cohort size.
+     *
+     * @return array userid => stdClass{id, userid, data}
+     */
+    public static function bulk_get_profile_field_data(int $fieldid, array $userids): array {
+        global $DB;
+        if (empty($userids)) return [];
+        list($insql, $params) = $DB->get_in_or_equal($userids);
+        $params[] = $fieldid;
+        $rows = $DB->get_records_sql(
+            "SELECT id, userid, data FROM {user_info_data} WHERE userid $insql AND fieldid = ?",
+            $params
+        );
+        $map = [];
+        foreach ($rows as $r) {
+            $map[(int)$r->userid] = $r;
+        }
+        return $map;
+    }
+
+    /**
+     * Write (insert or update) a single user's profile field value.
+     * Callers should already have checked the value actually changed —
+     * this does not compare, just writes.
+     */
+    public static function write_profile_field_value(
+        int $userid, int $fieldid, string $value, ?\stdClass $existing
+    ): void {
+        global $DB;
+        if ($existing) {
+            $existing->data = $value;
+            $DB->update_record('user_info_data', $existing);
+            return;
+        }
+        $DB->insert_record('user_info_data', (object)[
+            'userid'     => $userid,
+            'fieldid'    => $fieldid,
+            'data'       => $value,
+            'dataformat' => 0,
+        ]);
     }
 
     /**
