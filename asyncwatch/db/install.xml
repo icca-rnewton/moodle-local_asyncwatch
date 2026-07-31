@@ -180,5 +180,145 @@
       </KEYS>
     </TABLE>
 
+    <!-- ================================================================
+         Cohort targeting for course-level rules — parallel to the group
+         tables above. A rule set can now target course groups AND/OR
+         cohorts (union of both); a rule's deadline can be overridden by
+         group AND/OR cohort, with the best (latest) deadline winning.
+    ================================================================ -->
+
+    <TABLE NAME="asyncwatch_ruleset_cohorts" COMMENT="Cohorts assigned to a rule set">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="rulesetid" TYPE="int" LENGTH="10" NOTNULL="true"/>
+        <FIELD NAME="cohortid" TYPE="int" LENGTH="10" NOTNULL="true"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+        <KEY NAME="fk_ruleset" TYPE="foreign" FIELDS="rulesetid" REFTABLE="asyncwatch_rule_sets" REFFIELDS="id"/>
+        <KEY NAME="fk_cohort" TYPE="foreign" FIELDS="cohortid" REFTABLE="cohort" REFFIELDS="id"/>
+      </KEYS>
+      <INDEXES>
+        <INDEX NAME="uniq_rulesetid_cohortid" UNIQUE="true" FIELDS="rulesetid,cohortid"/>
+      </INDEXES>
+    </TABLE>
+
+    <TABLE NAME="asyncwatch_rule_cohort_overrides" COMMENT="Per-cohort deadline overrides for a course-level rule">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="ruleid" TYPE="int" LENGTH="10" NOTNULL="true"/>
+        <FIELD NAME="cohortid" TYPE="int" LENGTH="10" NOTNULL="true"/>
+        <FIELD NAME="deadline" TYPE="int" LENGTH="10" NOTNULL="true"/>
+        <FIELD NAME="warn_hours" TYPE="int" LENGTH="10" NOTNULL="false" DEFAULT="0"/>
+        <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"/>
+        <FIELD NAME="timemodified" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+        <KEY NAME="fk_rule" TYPE="foreign" FIELDS="ruleid" REFTABLE="asyncwatch_rules" REFFIELDS="id"/>
+        <KEY NAME="fk_cohort" TYPE="foreign" FIELDS="cohortid" REFTABLE="cohort" REFFIELDS="id"/>
+      </KEYS>
+      <INDEXES>
+        <INDEX NAME="uniq_ruleid_cohortid" UNIQUE="true" FIELDS="ruleid,cohortid"/>
+      </INDEXES>
+    </TABLE>
+
+    <!-- ================================================================
+         Cross-course rules — rules that span multiple courses at once.
+         Parts stay defined per-course as before; these tables only add
+         a course-agnostic rule layer on top. Kept fully separate from
+         asyncwatch_rules/asyncwatch_notifications to avoid id collisions
+         between the two rule tables.
+    ================================================================ -->
+
+    <TABLE NAME="asyncwatch_global_rules" COMMENT="Cross-course completion rules">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="name" TYPE="char" LENGTH="255" NOTNULL="true"/>
+        <FIELD NAME="parts_required" TYPE="int" LENGTH="6" NOTNULL="true" COMMENT="Absolute count required across all selected courses combined"/>
+        <FIELD NAME="deadline" TYPE="int" LENGTH="10" NOTNULL="true"/>
+        <FIELD NAME="warn_hours" TYPE="int" LENGTH="6" NOTNULL="false" DEFAULT="0" COMMENT="Stored as minutes, per existing convention"/>
+        <FIELD NAME="enabled" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="1"/>
+        <FIELD NAME="notify_learner_breach" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="0"/>
+        <FIELD NAME="notify_staff_breach" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="0"/>
+        <FIELD NAME="notify_learner_warning" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="0"/>
+        <FIELD NAME="notify_staff_warning" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="0"/>
+        <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"/>
+        <FIELD NAME="timemodified" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+      </KEYS>
+    </TABLE>
+
+    <TABLE NAME="asyncwatch_global_rule_courses" COMMENT="Courses whose Parts contribute to a global rule">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="ruleid" TYPE="int" LENGTH="10" NOTNULL="true"/>
+        <FIELD NAME="courseid" TYPE="int" LENGTH="10" NOTNULL="true"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+        <KEY NAME="fk_rule" TYPE="foreign" FIELDS="ruleid" REFTABLE="asyncwatch_global_rules" REFFIELDS="id"/>
+        <KEY NAME="fk_course" TYPE="foreign" FIELDS="courseid" REFTABLE="course" REFFIELDS="id"/>
+      </KEYS>
+      <INDEXES>
+        <INDEX NAME="uniq_rule_course" UNIQUE="true" FIELDS="ruleid,courseid"/>
+      </INDEXES>
+    </TABLE>
+
+    <TABLE NAME="asyncwatch_global_rule_cohorts" COMMENT="Optional cohort targeting for a global rule — empty means anyone enrolled in the selected courses">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="ruleid" TYPE="int" LENGTH="10" NOTNULL="true"/>
+        <FIELD NAME="cohortid" TYPE="int" LENGTH="10" NOTNULL="true"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+        <KEY NAME="fk_rule" TYPE="foreign" FIELDS="ruleid" REFTABLE="asyncwatch_global_rules" REFFIELDS="id"/>
+        <KEY NAME="fk_cohort" TYPE="foreign" FIELDS="cohortid" REFTABLE="cohort" REFFIELDS="id"/>
+      </KEYS>
+      <INDEXES>
+        <INDEX NAME="uniq_rule_cohort" UNIQUE="true" FIELDS="ruleid,cohortid"/>
+      </INDEXES>
+    </TABLE>
+
+    <TABLE NAME="asyncwatch_global_rule_overrides" COMMENT="Per-cohort deadline overrides for a global rule">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="ruleid" TYPE="int" LENGTH="10" NOTNULL="true"/>
+        <FIELD NAME="cohortid" TYPE="int" LENGTH="10" NOTNULL="true"/>
+        <FIELD NAME="deadline" TYPE="int" LENGTH="10" NOTNULL="true"/>
+        <FIELD NAME="warn_hours" TYPE="int" LENGTH="10" NOTNULL="false" DEFAULT="0"/>
+        <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"/>
+        <FIELD NAME="timemodified" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+        <KEY NAME="fk_rule" TYPE="foreign" FIELDS="ruleid" REFTABLE="asyncwatch_global_rules" REFFIELDS="id"/>
+        <KEY NAME="fk_cohort" TYPE="foreign" FIELDS="cohortid" REFTABLE="cohort" REFFIELDS="id"/>
+      </KEYS>
+      <INDEXES>
+        <INDEX NAME="uniq_rule_cohort_ov" UNIQUE="true" FIELDS="ruleid,cohortid"/>
+      </INDEXES>
+    </TABLE>
+
+    <TABLE NAME="asyncwatch_global_notifications" COMMENT="Idempotent send-log for global rules — kept separate from asyncwatch_notifications to avoid ruleid collisions between the two rule tables">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="ruleid" TYPE="int" LENGTH="10" NOTNULL="true"/>
+        <FIELD NAME="userid" TYPE="int" LENGTH="10" NOTNULL="true" COMMENT="0 = staff digest sentinel, matching the existing convention"/>
+        <FIELD NAME="type" TYPE="char" LENGTH="20" NOTNULL="true"/>
+        <FIELD NAME="timesent" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+        <KEY NAME="fk_rule" TYPE="foreign" FIELDS="ruleid" REFTABLE="asyncwatch_global_rules" REFFIELDS="id"/>
+      </KEYS>
+      <INDEXES>
+        <INDEX NAME="uniq_rule_user_type" UNIQUE="true" FIELDS="ruleid,userid,type"/>
+      </INDEXES>
+    </TABLE>
+
   </TABLES>
 </XMLDB>

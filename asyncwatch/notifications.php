@@ -37,12 +37,8 @@ if (!$tpl) {
         'courseid'                => $courseid,
         'learner_subject'         => get_string('tpl_learner_subject_default',        'local_asyncwatch'),
         'learner_body'            => get_string('tpl_learner_body_default',            'local_asyncwatch'),
-        'staff_subject'           => get_string('tpl_staff_subject_default',           'local_asyncwatch'),
-        'staff_body'              => get_string('tpl_staff_body_default',              'local_asyncwatch'),
         'learner_warning_subject' => get_string('tpl_learner_warning_subject_default', 'local_asyncwatch'),
         'learner_warning_body'    => get_string('tpl_learner_warning_body_default',    'local_asyncwatch'),
-        'staff_warning_subject'   => get_string('tpl_staff_warning_subject_default',   'local_asyncwatch'),
-        'staff_warning_body'      => get_string('tpl_staff_warning_body_default',      'local_asyncwatch'),
         'staff_recipients'        => json_encode(['userids' => []]),
     ];
 }
@@ -51,12 +47,8 @@ if (!$tpl) {
 $all_defaults = [
     'learner_subject'         => get_string('tpl_learner_subject_default',        'local_asyncwatch'),
     'learner_body'            => get_string('tpl_learner_body_default',            'local_asyncwatch'),
-    'staff_subject'           => get_string('tpl_staff_subject_default',           'local_asyncwatch'),
-    'staff_body'              => get_string('tpl_staff_body_default',              'local_asyncwatch'),
     'learner_warning_subject' => get_string('tpl_learner_warning_subject_default', 'local_asyncwatch'),
     'learner_warning_body'    => get_string('tpl_learner_warning_body_default',    'local_asyncwatch'),
-    'staff_warning_subject'   => get_string('tpl_staff_warning_subject_default',   'local_asyncwatch'),
-    'staff_warning_body'      => get_string('tpl_staff_warning_body_default',      'local_asyncwatch'),
 ];
 foreach ($all_defaults as $f => $default) {
     if (empty($tpl->$f)) $tpl->$f = $default;
@@ -67,7 +59,8 @@ $selected_userids = array_map('intval', $recipients['userids'] ?? []);
 
 // ── Build user list for autocomplete ─────────────────────────────────────────
 $all_users = $DB->get_records_sql(
-    "SELECT id, firstname, lastname, email
+    "SELECT id, firstname, lastname, email,
+            firstnamephonetic, lastnamephonetic, middlename, alternatename
        FROM {user}
       WHERE deleted = 0 AND suspended = 0 AND id != :guestid
       ORDER BY lastname ASC, firstname ASC",
@@ -94,12 +87,8 @@ if ($data = $form->get_data()) {
     // Extract editor text from the editor element arrays.
     $tpl->learner_subject         = $data->learner_subject;
     $tpl->learner_body            = $data->learner_body_editor['text'] ?? '';
-    $tpl->staff_subject           = $data->staff_subject;
-    $tpl->staff_body              = $data->staff_body_editor['text'] ?? '';
     $tpl->learner_warning_subject = $data->learner_warning_subject;
     $tpl->learner_warning_body    = $data->learner_warning_body_editor['text'] ?? '';
-    $tpl->staff_warning_subject   = $data->staff_warning_subject;
-    $tpl->staff_warning_body      = $data->staff_warning_body_editor['text'] ?? '';
 
     $tpl->staff_recipients = json_encode([
         'userids' => array_values(array_unique(array_filter(
@@ -140,12 +129,8 @@ $form->set_data([
     'courseid'                      => $courseid,
     'learner_subject'               => $tpl->learner_subject,
     'learner_body_editor'           => ['text' => aw_text_to_html($tpl->learner_body),            'format' => FORMAT_HTML],
-    'staff_subject'                 => $tpl->staff_subject,
-    'staff_body_editor'             => ['text' => aw_text_to_html($tpl->staff_body),              'format' => FORMAT_HTML],
     'learner_warning_subject'       => $tpl->learner_warning_subject,
     'learner_warning_body_editor'   => ['text' => aw_text_to_html($tpl->learner_warning_body),    'format' => FORMAT_HTML],
-    'staff_warning_subject'         => $tpl->staff_warning_subject,
-    'staff_warning_body_editor'     => ['text' => aw_text_to_html($tpl->staff_warning_body),      'format' => FORMAT_HTML],
     'staff_recipients_ids'          => $selected_userids,
 ]);
 

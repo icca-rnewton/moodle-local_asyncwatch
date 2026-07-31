@@ -31,4 +31,16 @@ $capabilities = [
             'manager'        => CAP_ALLOW,
         ],
     ],
+
+    // Manage cross-course rules (span multiple courses, live outside any
+    // single course context). Deliberately has NO default archetypes —
+    // Moodle's primary site administrators bypass capability checks
+    // entirely, so leaving this unassigned means only true site admins
+    // can reach it. Assign explicitly to a role if that's ever meant to
+    // change.
+    'local/asyncwatch:manageglobal' => [
+        'captype'      => 'write',
+        'contextlevel' => CONTEXT_SYSTEM,
+        'archetypes'   => [],
+    ],
 ];

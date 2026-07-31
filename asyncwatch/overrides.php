@@ -14,6 +14,7 @@ require_once($CFG->libdir . '/formslib.php');
 
 use local_asyncwatch\helper;
 use local_asyncwatch\form\override_form;
+use local_asyncwatch\form\global_override_form;
 
 // ── Params ────────────────────────────────────────────────────────────────────
 $ruleid = required_param('ruleid',  PARAM_INT);
@@ -51,14 +52,30 @@ if ($action === 'deleteoverride' && $id && confirm_sesskey()) {
         \core\output\notification::NOTIFY_SUCCESS);
 }
 
-// ── Build group list ──────────────────────────────────────────────────────────
+if ($action === 'deletecohortoverride' && $id && confirm_sesskey()) {
+    $override = $DB->get_record('asyncwatch_rule_cohort_overrides', ['id' => $id], 'id,ruleid', MUST_EXIST);
+    if ((int)$override->ruleid !== (int)$rule->id) {
+        throw new \moodle_exception('invalidrecord', 'error');
+    }
+    helper::delete_rule_cohort_override($id);
+    redirect($pageurl, get_string('overridedeleted', 'local_asyncwatch'), null,
+        \core\output\notification::NOTIFY_SUCCESS);
+}
+
+// ── Build group/cohort lists ────────────────────────────────────────────────────
 $all_groups   = groups_get_all_groups($courseid);
 $group_options = [];
 foreach ($all_groups as $g) {
     $group_options[$g->id] = format_string($g->name);
 }
 
-// ── Form (add / edit) ─────────────────────────────────────────────────────────
+$all_cohorts_raw = helper::get_all_cohorts();
+$cohort_options  = [];
+foreach ($all_cohorts_raw as $ch) {
+    $cohort_options[(int)$ch->id] = format_string($ch->name);
+}
+
+// ── Form (add / edit) — group override ──────────────────────────────────────────
 $form = null;
 if (in_array($action, ['addoverride', 'editoverride'])) {
     $form = new override_form($formurl->out(false), [
@@ -98,6 +115,55 @@ if (in_array($action, ['addoverride', 'editoverride'])) {
     }
 }
 
+// ── Form (add / edit) — cohort override ─────────────────────────────────────────
+// Reuses global_override_form (built for cross-course rule overrides) —
+// it's generic (cohortid + deadline + warn window), just saved to a
+// different table here.
+$cohort_form = null;
+if (in_array($action, ['addcohortoverride', 'editcohortoverride'])) {
+
+    if (empty($cohort_options)) {
+        redirect($pageurl, get_string('globalrule_nocohorts_for_override', 'local_asyncwatch'), null,
+            \core\output\notification::NOTIFY_WARNING);
+    }
+
+    $cohort_form = new global_override_form($formurl->out(false), [
+        'cohorts'      => $cohort_options,
+        'ruleid'       => $ruleid,
+        'cohort_label' => get_string('filter_cohort', 'local_asyncwatch'),
+    ]);
+
+    if ($cohort_form->is_cancelled()) {
+        redirect($pageurl);
+    }
+
+    if ($data = $cohort_form->get_data()) {
+        $record = (object)[
+            'ruleid'     => $ruleid,
+            'cohortid'   => (int)$data->cohortid,
+            'deadline'   => (int)$data->deadline,
+            'warn_hours' => override_form::warn_to_minutes((array)$data),
+        ];
+        if (!empty($data->overrideid)) {
+            $record->id = (int)$data->overrideid;
+        }
+        helper::save_rule_cohort_override($record);
+        redirect($pageurl, get_string('overridesaved', 'local_asyncwatch'), null,
+            \core\output\notification::NOTIFY_SUCCESS);
+    }
+
+    if ($action === 'editcohortoverride' && $id) {
+        $ov   = $DB->get_record('asyncwatch_rule_cohort_overrides', ['id' => $id], '*', MUST_EXIST);
+        $warn = override_form::minutes_to_fields((int)$ov->warn_hours);
+        $cohort_form->set_data(array_merge([
+            'overrideid' => $id,
+            'ruleid'     => $ruleid,
+            'cohortid'   => $ov->cohortid,
+            'deadline'   => $ov->deadline,
+        ], $warn));
+    }
+}
+
 // ── Render ────────────────────────────────────────────────────────────────────
 echo $OUTPUT->header();
 echo $OUTPUT->heading(get_string('overrides_title', 'local_asyncwatch') . ': ' . format_string($rule->name), 3);
@@ -121,8 +187,11 @@ echo '</div>';
 
 if ($form) {
     $form->display();
+} else if ($cohort_form) {
+    echo $OUTPUT->heading(get_string('overrides_title_cohort', 'local_asyncwatch'), 4);
+    $cohort_form->display();
 } else {
-    // ── Overrides list ────────────────────────────────────────────────────────
+    // ── Group overrides list ──────────────────────────────────────────────────
     $overrides = helper::get_rule_overrides($ruleid);
 
     if (!empty($overrides)) {
@@ -164,6 +233,51 @@ if ($form) {
 
     $add_url = new moodle_url($pageurl, ['action' => 'addoverride']);
     echo $OUTPUT->single_button($add_url, get_string('addoverride', 'local_asyncwatch'), 'get');
+
+    // ── Cohort overrides list ─────────────────────────────────────────────────
+    echo $OUTPUT->heading(get_string('overrides_title_cohort', 'local_asyncwatch'), 4, 'mt-5');
+
+    $cohort_overrides = helper::get_rule_cohort_overrides($ruleid);
+
+    if (!empty($cohort_overrides)) {
+        $ctable = new html_table();
+        $ctable->attributes['class'] = 'generaltable';
+        $ctable->head = [
+            get_string('filter_cohort', 'local_asyncwatch'),
+            get_string('deadline',      'local_asyncwatch'),
+            get_string('warn_window',   'local_asyncwatch'),
+            get_string('actions'),
+        ];
+
+        foreach ($cohort_overrides as $ov) {
+            $cohort_name = isset($cohort_options[(int)$ov->cohortid])
+                ? $cohort_options[(int)$ov->cohortid]
+                : get_string('deletedcohort', 'local_asyncwatch');
+
+            $wm = (int)$ov->warn_hours;
+            if ($wm <= 0)                    $wdisp = '—';
+            elseif ($wm % (7*24*60) === 0)   $wdisp = ($wm/(7*24*60)) . ' ' . get_string('weeks');
+            elseif ($wm % (24*60) === 0)     $wdisp = ($wm/(24*60))   . ' ' . get_string('days');
+            elseif ($wm % 60 === 0)          $wdisp = ($wm/60)         . ' ' . get_string('hours');
+            else                             $wdisp = $wm               . ' ' . get_string('minutes');
+
+            $edit_url   = new moodle_url($pageurl, ['action' => 'editcohortoverride',   'id' => $ov->id]);
+            $delete_url = new moodle_url($pageurl, ['action' => 'deletecohortoverride', 'id' => $ov->id, 'sesskey' => sesskey()]);
+
+            $actions =
+                html_writer::link($edit_url,   $OUTPUT->pix_icon('t/edit',   get_string('edit'))) . ' ' .
+                html_writer::link($delete_url, $OUTPUT->pix_icon('t/delete', get_string('delete')),
+                    ['onclick' => 'return confirm(' . json_encode(get_string('overridedeleteconfirm', 'local_asyncwatch')) . ')']);
+
+            $ctable->data[] = [$cohort_name, userdate($ov->deadline), $wdisp, $actions];
+        }
+        echo html_writer::table($ctable);
+    } else {
+        echo $OUTPUT->notification(get_string('nooverrides', 'local_asyncwatch'), 'info');
+    }
+
+    $add_cohort_url = new moodle_url($pageurl, ['action' => 'addcohortoverride']);
+    echo $OUTPUT->single_button($add_cohort_url, get_string('addoverride_cohort', 'local_asyncwatch'), 'get');
 }
 
 echo $OUTPUT->footer();

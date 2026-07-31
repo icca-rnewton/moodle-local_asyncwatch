@@ -131,10 +131,11 @@ class helper {
      */
     public static function delete_rule(int $ruleid): void {
         global $DB;
-        $DB->delete_records('asyncwatch_notifications',   ['ruleid' => $ruleid]);
-        $DB->delete_records('asyncwatch_ruleset_rules',   ['ruleid' => $ruleid]);
-        $DB->delete_records('asyncwatch_rule_overrides',  ['ruleid' => $ruleid]);
-        $DB->delete_records('asyncwatch_rules',           ['id'     => $ruleid]);
+        $DB->delete_records('asyncwatch_notifications',       ['ruleid' => $ruleid]);
+        $DB->delete_records('asyncwatch_ruleset_rules',       ['ruleid' => $ruleid]);
+        $DB->delete_records('asyncwatch_rule_overrides',      ['ruleid' => $ruleid]);
+        $DB->delete_records('asyncwatch_rule_cohort_overrides', ['ruleid' => $ruleid]);
+        $DB->delete_records('asyncwatch_rules',               ['id'     => $ruleid]);
     }
 
     // -------------------------------------------------------------------------
@@ -860,10 +861,43 @@ class helper {
     }
 
     /**
+     * Cohort overrides for a course-level rule — parallel to
+     * get_rule_overrides()/save_rule_override()/delete_rule_override().
+     */
+    public static function get_rule_cohort_overrides(int $ruleid): array {
+        global $DB;
+        return $DB->get_records('asyncwatch_rule_cohort_overrides', ['ruleid' => $ruleid]);
+    }
+
+    public static function save_rule_cohort_override(\stdClass $data): int {
+        global $DB;
+        $now = time();
+        if (!empty($data->id)) {
+            $data->timemodified = $now;
+            $DB->update_record('asyncwatch_rule_cohort_overrides', $data);
+            return (int)$data->id;
+        }
+        $data->timecreated  = $now;
+        $data->timemodified = $now;
+        return (int)$DB->insert_record('asyncwatch_rule_cohort_overrides', $data);
+    }
+
+    public static function delete_rule_cohort_override(int $overrideid): void {
+        global $DB;
+        $DB->delete_records('asyncwatch_rule_cohort_overrides', ['id' => $overrideid]);
+    }
+
+    public static function delete_rule_cohort_overrides(int $ruleid): void {
+        global $DB;
+        $DB->delete_records('asyncwatch_rule_cohort_overrides', ['ruleid' => $ruleid]);
+    }
+
+    /**
      * Get the effective deadline and warn_hours for a user against a rule.
      *
-     * If the user's group(s) have overrides, returns the one with the latest
-     * deadline (most lenient). Falls back to the rule defaults.
+     * If the user's group(s) or cohort(s) have overrides, returns the one
+     * with the latest deadline (most lenient) across both. Falls back to
+     * the rule defaults.
      *
      * @return array  ['deadline' => int, 'warn_hours' => int, 'override' => stdClass|null]
      */
@@ -871,6 +905,8 @@ class helper {
         \stdClass $rule, int $userid, int $courseid
     ): array {
         global $DB;
+
+        $candidates = [];
 
         // Query group membership directly from DB to avoid stale Moodle cache.
         $groupids = $DB->get_fieldset_sql(
@@ -880,20 +916,37 @@ class helper {
               WHERE gm.userid = :userid AND g.courseid = :courseid",
             ['userid' => $userid, 'courseid' => $courseid]
         );
-
-        $best_override = null;
         if (!empty($groupids)) {
             list($in_sql, $params) = $DB->get_in_or_equal($groupids);
             $params[] = $rule->id;
-            $overrides = $DB->get_records_sql(
+            $group_overrides = $DB->get_records_sql(
                 "SELECT * FROM {asyncwatch_rule_overrides}
-                  WHERE groupid $in_sql AND ruleid = ?
-                  ORDER BY deadline DESC",
+                  WHERE groupid $in_sql AND ruleid = ?",
                 $params
             );
-            if (!empty($overrides)) {
-                // Use the latest (most lenient) deadline.
-                $best_override = reset($overrides);
+            $candidates = array_merge($candidates, array_values($group_overrides));
+        }
+
+        // Cohort membership is site-wide, so no course filter needed here.
+        $cohortids = $DB->get_fieldset_sql(
+            "SELECT cohortid FROM {cohort_members} WHERE userid = :userid",
+            ['userid' => $userid]
+        );
+        if (!empty($cohortids)) {
+            list($in_sql, $params) = $DB->get_in_or_equal($cohortids);
+            $params[] = $rule->id;
+            $cohort_overrides = $DB->get_records_sql(
+                "SELECT * FROM {asyncwatch_rule_cohort_overrides}
+                  WHERE cohortid $in_sql AND ruleid = ?",
+                $params
+            );
+            $candidates = array_merge($candidates, array_values($cohort_overrides));
+        }
+
+        $best_override = null;
+        foreach ($candidates as $ov) {
+            if ($best_override === null || (int)$ov->deadline > (int)$best_override->deadline) {
+                $best_override = $ov;
             }
         }
 
@@ -941,9 +994,10 @@ class helper {
 
     public static function delete_rule_set(int $rulesetid): void {
         global $DB;
-        $DB->delete_records('asyncwatch_ruleset_rules',  ['rulesetid' => $rulesetid]);
-        $DB->delete_records('asyncwatch_ruleset_groups', ['rulesetid' => $rulesetid]);
-        $DB->delete_records('asyncwatch_rule_sets',      ['id'        => $rulesetid]);
+        $DB->delete_records('asyncwatch_ruleset_rules',   ['rulesetid' => $rulesetid]);
+        $DB->delete_records('asyncwatch_ruleset_groups',  ['rulesetid' => $rulesetid]);
+        $DB->delete_records('asyncwatch_ruleset_cohorts', ['rulesetid' => $rulesetid]);
+        $DB->delete_records('asyncwatch_rule_sets',       ['id'        => $rulesetid]);
     }
 
     public static function get_ruleset_ruleids(int $rulesetid): array {
@@ -975,13 +1029,34 @@ class helper {
     }
 
     /**
+     * Cohorts assigned to a rule set — parallel to get_ruleset_groupids().
+     * A rule set can target course groups AND/OR cohorts; a student in
+     * either is in scope.
+     */
+    public static function get_ruleset_cohortids(int $rulesetid): array {
+        global $DB;
+        $rows = $DB->get_records('asyncwatch_ruleset_cohorts', ['rulesetid' => $rulesetid], '', 'cohortid');
+        return array_map('intval', array_keys($rows));
+    }
+
+    public static function set_ruleset_cohorts(int $rulesetid, array $cohortids): void {
+        global $DB;
+        $DB->delete_records('asyncwatch_ruleset_cohorts', ['rulesetid' => $rulesetid]);
+        foreach (array_unique($cohortids) as $cid) {
+            $DB->insert_record('asyncwatch_ruleset_cohorts', (object)['rulesetid' => $rulesetid, 'cohortid' => (int)$cid]);
+        }
+    }
+
+    /**
      * Return the rule set IDs that a given user belongs to in a course,
-     * based on their course group membership.
+     * based on their course group membership OR cohort membership.
      *
      * @return int[]  Rule set IDs applicable to this user.
      */
     public static function get_user_rulesets(int $courseid, int $userid): array {
         global $DB;
+
+        $rulesetids = [];
 
         // Query group membership directly from DB to avoid stale Moodle cache.
         $groupids = $DB->get_fieldset_sql(
@@ -991,16 +1066,30 @@ class helper {
               WHERE gm.userid = :userid AND g.courseid = :courseid",
             ['userid' => $userid, 'courseid' => $courseid]
         );
-        if (empty($groupids)) {
-            return [];
+        if (!empty($groupids)) {
+            list($in_sql, $params) = $DB->get_in_or_equal($groupids);
+            $rows = $DB->get_records_sql(
+                "SELECT DISTINCT rulesetid FROM {asyncwatch_ruleset_groups} WHERE groupid $in_sql",
+                $params
+            );
+            $rulesetids = array_merge($rulesetids, array_map('intval', array_column($rows, 'rulesetid', 'rulesetid')));
         }
 
-        list($in_sql, $params) = $DB->get_in_or_equal($groupids);
-        $rows = $DB->get_records_sql(
-            "SELECT DISTINCT rulesetid FROM {asyncwatch_ruleset_groups} WHERE groupid $in_sql",
-            $params
+        // Cohort membership is site-wide, so no course filter needed here.
+        $cohortids = $DB->get_fieldset_sql(
+            "SELECT cohortid FROM {cohort_members} WHERE userid = :userid",
+            ['userid' => $userid]
         );
-        return array_map('intval', array_column($rows, 'rulesetid', 'rulesetid'));
+        if (!empty($cohortids)) {
+            list($in_sql, $params) = $DB->get_in_or_equal($cohortids);
+            $rows = $DB->get_records_sql(
+                "SELECT DISTINCT rulesetid FROM {asyncwatch_ruleset_cohorts} WHERE cohortid $in_sql",
+                $params
+            );
+            $rulesetids = array_merge($rulesetids, array_map('intval', array_column($rows, 'rulesetid', 'rulesetid')));
+        }
+
+        return array_values(array_unique($rulesetids));
     }
 
     /**
@@ -1089,5 +1178,534 @@ class helper {
         $plain = preg_replace('/\n{3,}/', "\n\n", trim($plain));
 
         return email_to_user($user, $support, $subject, $plain, $body);
+    }
+
+    /**
+     * Send an email to a user with an optional file attachment.
+     *
+     * @param stdClass $user
+     * @param string   $subject
+     * @param string   $body           HTML body.
+     * @param string   $attachment_path Full filesystem path to the attachment, or '' for none.
+     * @param string   $attachname     Filename to show the recipient.
+     */
+    public static function send_email_with_attachment(
+        \stdClass $user, string $subject, string $body,
+        string $attachment_path = '', string $attachname = ''
+    ): bool {
+        global $CFG;
+        $support = \core_user::get_support_user();
+
+        $plain = $body;
+        $plain = preg_replace('/<\/p>\s*<p[^>]*>/i', "\n\n", $plain);
+        $plain = preg_replace('/<p[^>]*>/i',  '',     $plain);
+        $plain = preg_replace('/<\/p>/i',     "\n\n", $plain);
+        $plain = preg_replace('/<br\s*\/?>/i',"\n",   $plain);
+        $plain = strip_tags($plain);
+        $plain = html_entity_decode($plain, ENT_QUOTES, 'UTF-8');
+        $plain = preg_replace('/\n{3,}/', "\n\n", trim($plain));
+
+        if ($attachment_path === '') {
+            return email_to_user($user, $support, $subject, $plain, $body);
+        }
+
+        // email_to_user() expects the attachment path relative to $CFG->dataroot.
+        $dataroot = rtrim($CFG->dataroot, '/');
+        $real     = realpath($attachment_path);
+        if ($real === false || strpos($real, $dataroot) !== 0) {
+            // Attachment isn't inside dataroot (e.g. sys temp dir) — copy it into
+            // dataroot/temp so email_to_user() can find it.
+            $temp_dir = $CFG->dataroot . '/temp/asyncwatch';
+            if (!is_dir($temp_dir)) {
+                @mkdir($temp_dir, $CFG->directorypermissions ?? 02777, true);
+            }
+            $copy_path = $temp_dir . '/' . basename($attachment_path);
+            @copy($attachment_path, $copy_path);
+            $real = $copy_path;
+        }
+        $relative = ltrim(substr($real, strlen($dataroot)), '/');
+
+        return email_to_user($user, $support, $subject, $plain, $body, $relative, $attachname);
+    }
+
+    // -------------------------------------------------------------------------
+    // PROGRESS ROW STATUS + CSV EXPORT (shared by report.php and staff digest emails)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Determine the status label for a single rule/user progress row.
+     */
+    public static function status_for_progress(
+        \stdClass $rule, int $done, int $now, int $eff_deadline, int $eff_warn
+    ): string {
+        if ($done >= $rule->parts_required) return 'completed';
+        if ($now >= $eff_deadline) return 'breach';
+        if ($eff_warn > 0 && $now >= ($eff_deadline - ($eff_warn * MINSECS))) return 'warning';
+        return 'ok';
+    }
+
+    /**
+     * CSV header row for a progress report, given the parts in play.
+     */
+    public static function csv_header(array $parts): array {
+        $header = [
+            get_string('rulename',       'local_asyncwatch'),
+            get_string('learner',        'local_asyncwatch'),
+            'Email',
+            get_string('parts_complete', 'local_asyncwatch'),
+            get_string('status',         'local_asyncwatch'),
+            get_string('last_activity',  'local_asyncwatch'),
+        ];
+        foreach ($parts as $part) {
+            $header[] = format_string($part->name);
+        }
+        return $header;
+    }
+
+    /**
+     * CSV data row for a single progress-report row object.
+     * $row must have: rule, user, done, total, status, parts, lastaccess.
+     */
+    public static function csv_row(\stdClass $row, array $parts): array {
+        $line = [
+            format_string($row->rule->name),
+            fullname($row->user),
+            $row->user->email,
+            $row->done . ' of ' . $row->total,
+            get_string('status_' . $row->status, 'local_asyncwatch'),
+            $row->lastaccess ? userdate($row->lastaccess) : '—',
+        ];
+        foreach ($parts as $part) {
+            $line[] = ($row->parts[$part->id] ?? false) ? '1' : '0';
+        }
+        return $line;
+    }
+
+    /**
+     * Render a set of progress-report rows as CSV text.
+     */
+    public static function rows_to_csv(array $rows, array $parts): string {
+        $stream = fopen('php://temp', 'r+');
+        fputcsv($stream, self::csv_header($parts));
+        foreach ($rows as $row) {
+            fputcsv($stream, self::csv_row($row, $parts));
+        }
+        rewind($stream);
+        $csv = stream_get_contents($stream);
+        fclose($stream);
+        return $csv;
+    }
+
+    /**
+     * Write a set of progress-report rows to a temporary CSV file and
+     * return its full path. Caller is responsible for deleting it once sent.
+     */
+    public static function write_csv_tempfile(array $rows, array $parts, string $filename_hint = 'report'): string {
+        global $CFG;
+        $csv      = self::rows_to_csv($rows, $parts);
+        $temp_dir = $CFG->dataroot . '/temp/asyncwatch';
+        if (!is_dir($temp_dir)) {
+            @mkdir($temp_dir, $CFG->directorypermissions ?? 02777, true);
+        }
+        $path = $temp_dir . '/' . $filename_hint . '_' . time() . '_' . random_string(6) . '.csv';
+        file_put_contents($path, $csv);
+        return $path;
+    }
+
+    // -------------------------------------------------------------------------
+    // CROSS-COURSE (GLOBAL) RULES
+    // -------------------------------------------------------------------------
+
+    /**
+     * Courses that have at least one Part defined, with a part count each.
+     * Used to populate the course picker on the cross-course rule form —
+     * courses with no Parts would contribute nothing to any rule.
+     *
+     * @return array  Keyed by courseid: [id, coursename, partcount]
+     */
+    public static function get_courses_with_parts(): array {
+        global $DB;
+        return $DB->get_records_sql(
+            "SELECT p.courseid AS id, c.fullname AS coursename, COUNT(p.id) AS partcount
+               FROM {asyncwatch_parts} p
+               JOIN {course} c ON c.id = p.courseid
+              GROUP BY p.courseid, c.fullname
+              ORDER BY c.fullname ASC"
+        );
+    }
+
+    /**
+     * Return all cross-course rules, deadline soonest first.
+     */
+    public static function get_global_rules(): array {
+        global $DB;
+        return $DB->get_records('asyncwatch_global_rules', [], 'deadline ASC');
+    }
+
+    /**
+     * Return a single cross-course rule record.
+     */
+    public static function get_global_rule(int $ruleid): \stdClass {
+        global $DB;
+        return $DB->get_record('asyncwatch_global_rules', ['id' => $ruleid], '*', MUST_EXIST);
+    }
+
+    /**
+     * Save (insert or update) a cross-course rule.
+     */
+    public static function save_global_rule(\stdClass $data): int {
+        global $DB;
+        $now = time();
+        if (!empty($data->id)) {
+            $data->timemodified = $now;
+            $DB->update_record('asyncwatch_global_rules', $data);
+            return (int)$data->id;
+        }
+        $data->timecreated  = $now;
+        $data->timemodified = $now;
+        return (int)$DB->insert_record('asyncwatch_global_rules', $data);
+    }
+
+    /**
+     * Delete a cross-course rule and everything that hangs off it.
+     */
+    public static function delete_global_rule(int $ruleid): void {
+        global $DB;
+        $DB->delete_records('asyncwatch_global_notifications',  ['ruleid' => $ruleid]);
+        $DB->delete_records('asyncwatch_global_rule_overrides', ['ruleid' => $ruleid]);
+        $DB->delete_records('asyncwatch_global_rule_cohorts',   ['ruleid' => $ruleid]);
+        $DB->delete_records('asyncwatch_global_rule_courses',   ['ruleid' => $ruleid]);
+        $DB->delete_records('asyncwatch_global_rules',          ['id'     => $ruleid]);
+    }
+
+    /**
+     * Course ids a cross-course rule draws parts from.
+     */
+    public static function get_global_rule_courseids(int $ruleid): array {
+        global $DB;
+        $rows = $DB->get_records('asyncwatch_global_rule_courses', ['ruleid' => $ruleid], '', 'courseid');
+        return array_map('intval', array_keys($rows));
+    }
+
+    /**
+     * Replace all course assignments for a cross-course rule.
+     */
+    public static function set_global_rule_courses(int $ruleid, array $courseids): void {
+        global $DB;
+        $DB->delete_records('asyncwatch_global_rule_courses', ['ruleid' => $ruleid]);
+        foreach (array_unique(array_map('intval', $courseids)) as $cid) {
+            $DB->insert_record('asyncwatch_global_rule_courses', (object)['ruleid' => $ruleid, 'courseid' => $cid]);
+        }
+    }
+
+    /**
+     * Cohort ids a cross-course rule is targeted at. Empty = anyone
+     * enrolled in the rule's courses (the v1 default).
+     */
+    public static function get_global_rule_cohortids(int $ruleid): array {
+        global $DB;
+        $rows = $DB->get_records('asyncwatch_global_rule_cohorts', ['ruleid' => $ruleid], '', 'cohortid');
+        return array_map('intval', array_keys($rows));
+    }
+
+    /**
+     * Replace all cohort targeting for a cross-course rule.
+     */
+    public static function set_global_rule_cohorts(int $ruleid, array $cohortids): void {
+        global $DB;
+        $DB->delete_records('asyncwatch_global_rule_cohorts', ['ruleid' => $ruleid]);
+        foreach (array_unique(array_map('intval', $cohortids)) as $cid) {
+            $DB->insert_record('asyncwatch_global_rule_cohorts', (object)['ruleid' => $ruleid, 'cohortid' => $cid]);
+        }
+    }
+
+    /**
+     * All site cohorts, id => name. Direct query rather than the cohort
+     * API — this plugin doesn't need anything beyond id/name and avoids
+     * depending on an exact core function signature.
+     */
+    public static function get_all_cohorts(): array {
+        global $DB;
+        return $DB->get_records('cohort', [], 'name ASC', 'id, name, idnumber');
+    }
+
+    /**
+     * Sum of Parts across a set of courses — the maximum a cross-course
+     * rule's parts_required could sensibly be.
+     */
+    public static function total_parts_for_courses(array $courseids): int {
+        if (empty($courseids)) return 0;
+        $courses = self::get_courses_with_parts();
+        $total = 0;
+        foreach ($courseids as $cid) {
+            $total += isset($courses[$cid]) ? (int)$courses[$cid]->partcount : 0;
+        }
+        return $total;
+    }
+
+    /**
+     * Users in scope for a cross-course rule: union of enrolment across
+     * the rule's courses, intersected with cohort membership if the rule
+     * targets one or more cohorts (no cohorts = no restriction, v1 default).
+     *
+     * @return array [userid => stdClass{id, firstname, lastname, email, lastaccess}]
+     */
+    public static function get_global_rule_users(int $ruleid): array {
+        global $DB;
+        $courseids = self::get_global_rule_courseids($ruleid);
+        if (empty($courseids)) return [];
+
+        $users = [];
+        foreach ($courseids as $cid) {
+            $context = \context_course::instance($cid);
+            $enrolled = get_enrolled_users($context, '', 0,
+                'u.id, u.firstname, u.lastname, u.email, u.lastaccess, '
+                . 'u.firstnamephonetic, u.lastnamephonetic, u.middlename, u.alternatename'
+            );
+            foreach ($enrolled as $u) {
+                $users[(int)$u->id] = $u; // union — de-duplicated by userid.
+            }
+        }
+
+        $cohortids = self::get_global_rule_cohortids($ruleid);
+        if (!empty($cohortids) && !empty($users)) {
+            list($in_sql, $params) = $DB->get_in_or_equal($cohortids);
+            $rows = $DB->get_records_sql(
+                "SELECT DISTINCT userid AS id FROM {cohort_members} WHERE cohortid $in_sql",
+                $params
+            );
+            $cohort_userids = array_map('intval', array_keys($rows));
+            $users = array_intersect_key($users, array_flip($cohort_userids));
+        }
+
+        return $users;
+    }
+
+    /**
+     * Bulk progress for a cross-course rule across all its courses, for a
+     * given set of users — sums completed Parts per user across courses.
+     *
+     * @return array [userid => ['completed'=>int, 'total'=>int, 'parts'=>[partid=>bool]]]
+     */
+    public static function bulk_get_global_rule_progress(int $ruleid, array $userids): array {
+        $courseids = self::get_global_rule_courseids($ruleid);
+        $total     = self::total_parts_for_courses($courseids);
+
+        $results = [];
+        foreach ($userids as $uid) {
+            $results[$uid] = ['completed' => 0, 'total' => $total, 'parts' => []];
+        }
+        if (empty($userids) || empty($courseids)) return $results;
+
+        foreach ($courseids as $cid) {
+            $progress = self::bulk_get_user_progress($cid, $userids);
+            foreach ($progress as $uid => $p) {
+                $results[$uid]['completed'] += $p['completed'];
+                // Merge this course's parts map into the combined one —
+                // partids are unique across the whole plugin, so no clashes.
+                $results[$uid]['parts'] = $results[$uid]['parts'] + $p['parts'];
+            }
+        }
+        return $results;
+    }
+
+    /**
+     * All Parts belonging to a rule's courses, each labelled with its
+     * course so identically-named parts from different courses stay
+     * distinguishable in a combined report/CSV.
+     *
+     * @return array  Keyed by partid: stdClass{id, name, courseid, coursename}
+     */
+    public static function get_global_rule_parts(int $ruleid): array {
+        $courseids = self::get_global_rule_courseids($ruleid);
+        $parts = [];
+        foreach ($courseids as $cid) {
+            $course = get_course($cid);
+            foreach (self::get_parts($cid) as $part) {
+                $part->coursename = $course->fullname;
+                $parts[$part->id]  = $part;
+            }
+        }
+        return $parts;
+    }
+
+    /**
+     * Cohort deadline overrides for a cross-course rule.
+     */
+    public static function get_global_rule_overrides(int $ruleid): array {
+        global $DB;
+        return $DB->get_records('asyncwatch_global_rule_overrides', ['ruleid' => $ruleid]);
+    }
+
+    /**
+     * Save (insert or update) a cohort override for a cross-course rule.
+     */
+    public static function save_global_rule_override(\stdClass $data): int {
+        global $DB;
+        $now = time();
+        if (!empty($data->id)) {
+            $data->timemodified = $now;
+            $DB->update_record('asyncwatch_global_rule_overrides', $data);
+            return (int)$data->id;
+        }
+        $data->timecreated  = $now;
+        $data->timemodified = $now;
+        return (int)$DB->insert_record('asyncwatch_global_rule_overrides', $data);
+    }
+
+    /**
+     * Delete a cohort override for a cross-course rule.
+     */
+    public static function delete_global_rule_override(int $overrideid): void {
+        global $DB;
+        $DB->delete_records('asyncwatch_global_rule_overrides', ['id' => $overrideid]);
+    }
+
+    /**
+     * Effective deadline/warn window for a user under a cross-course rule,
+     * applying the best (latest-deadline) cohort override the user
+     * belongs to, if any. Mirrors get_effective_deadline() for per-course
+     * rules, keyed on cohort membership instead of course-group membership.
+     */
+    public static function get_global_effective_deadline(\stdClass $rule, int $userid): array {
+        global $DB;
+        $overrides = self::get_global_rule_overrides((int)$rule->id);
+        if (empty($overrides)) {
+            return ['deadline' => (int)$rule->deadline, 'warn_hours' => (int)$rule->warn_hours, 'override' => null];
+        }
+
+        $cohortids = array_map(function($o) { return (int)$o->cohortid; }, $overrides);
+        list($in_sql, $params) = $DB->get_in_or_equal($cohortids);
+        $params[] = $userid;
+        $member_rows = $DB->get_records_sql(
+            "SELECT id, cohortid FROM {cohort_members} WHERE cohortid $in_sql AND userid = ?",
+            $params
+        );
+        $member_cohortids = array_map(function($r) { return (int)$r->cohortid; }, $member_rows);
+
+        $best = null;
+        foreach ($overrides as $ov) {
+            if (!in_array((int)$ov->cohortid, $member_cohortids)) continue;
+            if ($best === null || (int)$ov->deadline > (int)$best->deadline) $best = $ov;
+        }
+        if ($best) {
+            return ['deadline' => (int)$best->deadline, 'warn_hours' => (int)$best->warn_hours, 'override' => $best];
+        }
+        return ['deadline' => (int)$rule->deadline, 'warn_hours' => (int)$rule->warn_hours, 'override' => null];
+    }
+
+    /**
+     * CSV header for the cross-course report. No per-part columns here —
+     * unlike a per-course report, a rule's Parts can come from several
+     * courses at once, so a wide per-part breakdown stops being readable.
+     */
+    public static function global_csv_header(): array {
+        return [
+            get_string('rulename',              'local_asyncwatch'),
+            get_string('learner',                'local_asyncwatch'),
+            'Email',
+            get_string('globalrule_col_courses', 'local_asyncwatch'),
+            get_string('parts_complete',         'local_asyncwatch'),
+            get_string('status',                 'local_asyncwatch'),
+            get_string('last_activity',          'local_asyncwatch'),
+        ];
+    }
+
+    /**
+     * CSV data row for the cross-course report.
+     * $row must have: rule, user, done, total, status, lastaccess, coursenames.
+     */
+    public static function global_csv_row(\stdClass $row): array {
+        return [
+            format_string($row->rule->name),
+            fullname($row->user),
+            $row->user->email,
+            implode(', ', $row->coursenames),
+            $row->done . ' of ' . $row->total,
+            get_string('status_' . $row->status, 'local_asyncwatch'),
+            $row->lastaccess ? userdate($row->lastaccess) : '—',
+        ];
+    }
+
+    /**
+     * Render cross-course report rows as CSV text.
+     */
+    public static function global_rows_to_csv(array $rows): string {
+        $stream = fopen('php://temp', 'r+');
+        fputcsv($stream, self::global_csv_header());
+        foreach ($rows as $row) {
+            fputcsv($stream, self::global_csv_row($row));
+        }
+        rewind($stream);
+        $csv = stream_get_contents($stream);
+        fclose($stream);
+        return $csv;
+    }
+
+    /**
+     * Has a notification of this type already been sent for a cross-course
+     * rule? Mirrors notification_already_sent() but against the separate
+     * asyncwatch_global_notifications table.
+     */
+    public static function global_notification_already_sent(int $ruleid, int $userid, string $type): bool {
+        global $DB;
+        return $DB->record_exists('asyncwatch_global_notifications', [
+            'ruleid' => $ruleid,
+            'userid' => $userid,
+            'type'   => $type,
+        ]);
+    }
+
+    /**
+     * Record that a cross-course notification was sent.
+     */
+    public static function record_global_notification(int $ruleid, int $userid, string $type): void {
+        global $DB;
+        $DB->insert_record('asyncwatch_global_notifications', (object)[
+            'ruleid'   => $ruleid,
+            'userid'   => $userid,
+            'type'     => $type,
+            'timesent' => time(),
+        ]);
+    }
+
+    /**
+     * Staff who receive cross-course rule report emails — one site-wide
+     * list shared by every cross-course rule, same idea as the site-wide
+     * email wording. Stored as JSON in plugin config rather than a new
+     * table, since it's just a list of user ids.
+     *
+     * @return int[]
+     */
+    public static function get_global_staff_recipient_ids(): array {
+        $raw = get_config('local_asyncwatch', 'global_staff_recipients');
+        if (empty($raw)) return [];
+        $ids = json_decode($raw, true);
+        return is_array($ids) ? array_map('intval', $ids) : [];
+    }
+
+    /**
+     * Replace the site-wide cross-course staff recipient list.
+     */
+    public static function set_global_staff_recipient_ids(array $userids): void {
+        $ids = array_values(array_unique(array_filter(array_map('intval', $userids))));
+        set_config('global_staff_recipients', json_encode($ids), 'local_asyncwatch');
+    }
+
+    /**
+     * Write cross-course report rows to a temporary CSV file and return its
+     * path. Mirrors write_csv_tempfile() but for the simpler global-rule
+     * CSV shape (global_rows_to_csv() — no per-part columns).
+     */
+    public static function write_global_csv_tempfile(array $rows, string $filename_hint = 'globalreport'): string {
+        global $CFG;
+        $csv      = self::global_rows_to_csv($rows);
+        $temp_dir = $CFG->dataroot . '/temp/asyncwatch';
+        if (!is_dir($temp_dir)) {
+            @mkdir($temp_dir, $CFG->directorypermissions ?? 02777, true);
+        }
+        $path = $temp_dir . '/' . $filename_hint . '_' . time() . '_' . random_string(6) . '.csv';
+        file_put_contents($path, $csv);
+        return $path;
     }
 }

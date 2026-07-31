@@ -17,9 +17,10 @@ require_once($CFG->libdir . '/formslib.php');
 class ruleset_form extends \moodleform {
 
     public function definition(): void {
-        $mform     = $this->_form;
-        $all_rules = $this->_customdata['all_rules'];  // rule objects keyed by id
-        $all_groups= $this->_customdata['all_groups']; // group objects keyed by id
+        $mform      = $this->_form;
+        $all_rules  = $this->_customdata['all_rules'];   // rule objects keyed by id
+        $all_groups = $this->_customdata['all_groups'];  // group objects keyed by id
+        $all_cohorts= $this->_customdata['all_cohorts'] ?? []; // cohort objects keyed by id
 
         $mform->addElement('hidden', 'rulesetid', 0);
         $mform->setType('rulesetid', PARAM_INT);
@@ -101,6 +102,39 @@ class ruleset_form extends \moodleform {
             }
             $groups_html .= '</div>';
             $mform->addElement('static', 'groups_list', '', $groups_html);
+        }
+
+        // ── Cohorts ───────────────────────────────────────────────────────────
+        $mform->addElement('header', 'cohorts_header',
+            get_string('ruleset_cohorts', 'local_asyncwatch'));
+
+        $mform->addElement('static', 'cohorts_desc', '',
+            \html_writer::tag('p',
+                get_string('ruleset_cohorts_desc', 'local_asyncwatch'),
+                ['class' => 'text-muted small mb-2']
+            )
+        );
+
+        if (empty($all_cohorts)) {
+            $mform->addElement('static', 'no_cohorts', '',
+                \html_writer::tag('p',
+                    get_string('ruleset_nocohorts', 'local_asyncwatch'),
+                    ['class' => 'text-muted font-italic']
+                )
+            );
+        } else {
+            $cohorts_html = '<div style="max-height:220px;overflow-y:auto;border:1px solid #dee2e6;border-radius:4px;padding:8px;">';
+            foreach ($all_cohorts as $cohort) {
+                $cohorts_html .= '<div class="form-check">'
+                               . '<input class="form-check-input" type="checkbox"'
+                               . ' name="ruleset_cohorts[]" value="' . (int)$cohort->id . '"'
+                               . ' id="rs_cohort_' . $cohort->id . '">'
+                               . '<label class="form-check-label" for="rs_cohort_' . $cohort->id . '">'
+                               . s(format_string($cohort->name))
+                               . '</label></div>';
+            }
+            $cohorts_html .= '</div>';
+            $mform->addElement('static', 'cohorts_list', '', $cohorts_html);
         }
 
         $this->add_action_buttons(true, get_string('savechanges'));

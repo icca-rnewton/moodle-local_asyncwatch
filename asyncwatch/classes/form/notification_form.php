@@ -32,31 +32,33 @@ class notification_form extends \moodleform {
             'context'  => \context_course::instance($courseid),
         ];
 
-        // Placeholder reference block — shown after each body editor.
-        $ph_html = '<div class="alert alert-info py-2 px-3 mt-1 mb-2" style="font-size:0.875em;">'
-                 . '<strong>' . get_string('ph_available', 'local_asyncwatch') . '</strong> &nbsp;'
-                 . implode(' &nbsp; ', array_map(function($k, $v) {
-                       return '<code>' . htmlspecialchars($k, ENT_QUOTES) . '</code> <span class="text-muted">— ' . htmlspecialchars($v, ENT_QUOTES) . '</span>';
-                   }, [
-                       '{{firstname}}', '{{lastname}}', '{{fullname}}', '{{email}}',
-                       '{{coursename}}', '{{parts_done}}', '{{parts_required}}',
-                       '{{deadline}}', '{{rulename}}', '{{sitename}}',
-                   ], [
-                       get_string('ph_firstname',     'local_asyncwatch'),
-                       get_string('ph_lastname',      'local_asyncwatch'),
-                       get_string('ph_fullname',      'local_asyncwatch'),
-                       get_string('ph_email',         'local_asyncwatch'),
-                       get_string('ph_coursename',    'local_asyncwatch'),
-                       get_string('ph_parts_done',    'local_asyncwatch'),
-                       get_string('ph_parts_required','local_asyncwatch'),
-                       get_string('ph_deadline',      'local_asyncwatch'),
-                       get_string('ph_rulename',      'local_asyncwatch'),
-                       get_string('ph_sitename',      'local_asyncwatch'),
-                   ]))
-                 . '</div>';
+        // Placeholder reference block — shown after each learner body editor.
+        // Staff report wording is no longer edited here (see the note below) —
+        // it now lives in site admin settings, where it has its own
+        // rule/course-level-only placeholder set.
+        $labels = [
+            '{{firstname}}'      => get_string('ph_firstname',      'local_asyncwatch'),
+            '{{lastname}}'       => get_string('ph_lastname',       'local_asyncwatch'),
+            '{{fullname}}'       => get_string('ph_fullname',       'local_asyncwatch'),
+            '{{email}}'          => get_string('ph_email',          'local_asyncwatch'),
+            '{{coursename}}'     => get_string('ph_coursename',     'local_asyncwatch'),
+            '{{parts_done}}'     => get_string('ph_parts_done',     'local_asyncwatch'),
+            '{{parts_required}}' => get_string('ph_parts_required', 'local_asyncwatch'),
+            '{{deadline}}'       => get_string('ph_deadline',       'local_asyncwatch'),
+            '{{rulename}}'       => get_string('ph_rulename',       'local_asyncwatch'),
+            '{{sitename}}'       => get_string('ph_sitename',       'local_asyncwatch'),
+        ];
+        $ph_parts = [];
+        foreach ($labels as $k => $v) {
+            $ph_parts[] = '<code>' . htmlspecialchars($k, ENT_QUOTES) . '</code> <span class="text-muted">— '
+                        . htmlspecialchars($v, ENT_QUOTES) . '</span>';
+        }
+        $ph_html_learner = '<div class="alert alert-info py-2 px-3 mt-1 mb-2" style="font-size:0.875em;">'
+                          . '<strong>' . get_string('ph_available', 'local_asyncwatch') . '</strong> &nbsp;'
+                          . implode(' &nbsp; ', $ph_parts) . '</div>';
 
         // Helper closure to add a subject + editor pair.
-        $add_template = function(string $subj_name, string $body_name, string $header_label) use ($mform, $editor_opts, $ph_html) {
+        $add_template = function(string $subj_name, string $body_name, string $header_label, string $ph_html) use ($mform, $editor_opts) {
             $mform->addElement('header', $body_name . '_header', $header_label);
 
             $mform->addElement('text', $subj_name,
@@ -74,29 +76,27 @@ class notification_form extends \moodleform {
         $add_template(
             'learner_subject',
             'learner_body',
-            get_string('notify_breach_heading', 'local_asyncwatch') . ' — ' . get_string('tpl_learner_heading', 'local_asyncwatch')
+            get_string('notify_breach_heading', 'local_asyncwatch') . ' — ' . get_string('tpl_learner_heading', 'local_asyncwatch'),
+            $ph_html_learner
         );
 
-        // ── 2. Behind — Staff ─────────────────────────────────────────────────
-        $add_template(
-            'staff_subject',
-            'staff_body',
-            get_string('notify_breach_heading', 'local_asyncwatch') . ' — ' . get_string('tpl_staff_heading', 'local_asyncwatch')
+        // ── 2. Behind — Staff report wording now lives in site admin settings ──
+        $mform->addElement('static', 'staff_report_note', get_string('tpl_staff_heading', 'local_asyncwatch'),
+            '<div class="alert alert-secondary py-2 px-3" style="font-size:0.875em;">'
+            . htmlspecialchars(get_string('staff_report_settings_link', 'local_asyncwatch'), ENT_QUOTES)
+            . '</div>'
         );
 
         // ── 3. At Risk — Learner ──────────────────────────────────────────────
         $add_template(
             'learner_warning_subject',
             'learner_warning_body',
-            get_string('notify_warning_heading', 'local_asyncwatch') . ' — ' . get_string('tpl_learner_heading', 'local_asyncwatch')
+            get_string('notify_warning_heading', 'local_asyncwatch') . ' — ' . get_string('tpl_learner_heading', 'local_asyncwatch'),
+            $ph_html_learner
         );
 
-        // ── 4. At Risk — Staff ────────────────────────────────────────────────
-        $add_template(
-            'staff_warning_subject',
-            'staff_warning_body',
-            get_string('notify_warning_heading', 'local_asyncwatch') . ' — ' . get_string('tpl_staff_heading', 'local_asyncwatch')
-        );
+        // ── 4. At Risk — Staff report wording also lives in site admin settings ─
+        // (single note above covers both; no separate editor needed here)
 
         // ── Staff recipients ──────────────────────────────────────────────────
         $mform->addElement('header', 'recipients_header',

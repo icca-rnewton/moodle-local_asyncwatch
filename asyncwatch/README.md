@@ -127,7 +127,19 @@ The task `\local_asyncwatch\task\check_progress` runs **hourly** and:
 3. Sends a **warning** email if: inside the `warn_hours` window + below threshold + not yet sent.
 4. Sends a **breach** email if: past the deadline + below threshold + not yet sent.
 
-Each email type is recorded in `asyncwatch_notifications` so it is only sent once.
+**Learner emails** are personal and sent one-per-student, as above.
+
+**Staff emails** are a single **report digest** per rule per type (warning/breach) —
+not one email per affected student. The email body is a short summary
+(rule, course, deadline, affected-student count); the affected students
+themselves are listed in a **CSV attachment** (same columns as the Report
+tab's "Export CSV"). This keeps staff inboxes usable on courses with large
+cohorts (verified with 460 students on one rule in testing).
+
+Each email type is recorded in `asyncwatch_notifications` so it is only sent
+once. Staff digests use `userid = 0` as a sentinel with `type` values
+`breach_staff` / `warning_staff`, alongside the existing per-student
+`breach` / `warning` rows used for learner emails.
 
 Run manually:
 ```bash

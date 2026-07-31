@@ -229,8 +229,137 @@ function xmldb_local_asyncwatch_upgrade($oldversion) {
         upgrade_plugin_savepoint(true, 2026061000, 'local', 'asyncwatch');
     }
 
+    if ($oldversion < 2026072300) {
+
+        // Cross-course rules — new tables, additive only. Kept fully
+        // separate from asyncwatch_rules/asyncwatch_notifications to avoid
+        // id collisions between the two rule tables. Parts stay per-course
+        // and are untouched by this.
+
+        // 1. asyncwatch_global_rules
+        $table = new xmldb_table('asyncwatch_global_rules');
+        $table->add_field('id',                    XMLDB_TYPE_INTEGER, '10',  null, XMLDB_NOTNULL, XMLDB_SEQUENCE);
+        $table->add_field('name',                   XMLDB_TYPE_CHAR,    '255', null, XMLDB_NOTNULL);
+        $table->add_field('parts_required',          XMLDB_TYPE_INTEGER, '6',   null, XMLDB_NOTNULL);
+        $table->add_field('deadline',                XMLDB_TYPE_INTEGER, '10',  null, XMLDB_NOTNULL);
+        $table->add_field('warn_hours',               XMLDB_TYPE_INTEGER, '6',   null, false, null, '0');
+        $table->add_field('enabled',                  XMLDB_TYPE_INTEGER, '1',   null, XMLDB_NOTNULL, null, '1');
+        $table->add_field('notify_learner_breach',    XMLDB_TYPE_INTEGER, '1',   null, XMLDB_NOTNULL, null, '0');
+        $table->add_field('notify_staff_breach',      XMLDB_TYPE_INTEGER, '1',   null, XMLDB_NOTNULL, null, '0');
+        $table->add_field('notify_learner_warning',   XMLDB_TYPE_INTEGER, '1',   null, XMLDB_NOTNULL, null, '0');
+        $table->add_field('notify_staff_warning',     XMLDB_TYPE_INTEGER, '1',   null, XMLDB_NOTNULL, null, '0');
+        $table->add_field('timecreated',              XMLDB_TYPE_INTEGER, '10',  null, XMLDB_NOTNULL, null, '0');
+        $table->add_field('timemodified',             XMLDB_TYPE_INTEGER, '10',  null, XMLDB_NOTNULL, null, '0');
+        $table->add_key('primary', XMLDB_KEY_PRIMARY, ['id']);
+        if (!$dbman->table_exists($table)) {
+            $dbman->create_table($table);
+        }
+
+        // 2. asyncwatch_global_rule_courses
+        $table = new xmldb_table('asyncwatch_global_rule_courses');
+        $table->add_field('id',       XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, XMLDB_SEQUENCE);
+        $table->add_field('ruleid',   XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL);
+        $table->add_field('courseid', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL);
+        $table->add_key('primary', XMLDB_KEY_PRIMARY, ['id']);
+        if (!$dbman->table_exists($table)) {
+            $dbman->create_table($table);
+        }
+        $index = new xmldb_index('uniq_rule_course', XMLDB_INDEX_UNIQUE, ['ruleid', 'courseid']);
+        if (!$dbman->index_exists($table, $index)) {
+            $dbman->add_index($table, $index);
+        }
+
+        // 3. asyncwatch_global_rule_cohorts
+        $table = new xmldb_table('asyncwatch_global_rule_cohorts');
+        $table->add_field('id',       XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, XMLDB_SEQUENCE);
+        $table->add_field('ruleid',   XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL);
+        $table->add_field('cohortid', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL);
+        $table->add_key('primary', XMLDB_KEY_PRIMARY, ['id']);
+        if (!$dbman->table_exists($table)) {
+            $dbman->create_table($table);
+        }
+        $index = new xmldb_index('uniq_rule_cohort', XMLDB_INDEX_UNIQUE, ['ruleid', 'cohortid']);
+        if (!$dbman->index_exists($table, $index)) {
+            $dbman->add_index($table, $index);
+        }
+
+        // 4. asyncwatch_global_rule_overrides
+        $table = new xmldb_table('asyncwatch_global_rule_overrides');
+        $table->add_field('id',           XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, XMLDB_SEQUENCE);
+        $table->add_field('ruleid',       XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL);
+        $table->add_field('cohortid',     XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL);
+        $table->add_field('deadline',     XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL);
+        $table->add_field('warn_hours',   XMLDB_TYPE_INTEGER, '10', null, false, null, '0');
+        $table->add_field('timecreated',  XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, null, '0');
+        $table->add_field('timemodified', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, null, '0');
+        $table->add_key('primary', XMLDB_KEY_PRIMARY, ['id']);
+        if (!$dbman->table_exists($table)) {
+            $dbman->create_table($table);
+        }
+        $index = new xmldb_index('uniq_rule_cohort_ov', XMLDB_INDEX_UNIQUE, ['ruleid', 'cohortid']);
+        if (!$dbman->index_exists($table, $index)) {
+            $dbman->add_index($table, $index);
+        }
+
+        // 5. asyncwatch_global_notifications — separate send-log so ids
+        //    never collide with asyncwatch_notifications' ruleid space.
+        $table = new xmldb_table('asyncwatch_global_notifications');
+        $table->add_field('id',       XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, XMLDB_SEQUENCE);
+        $table->add_field('ruleid',   XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL);
+        $table->add_field('userid',   XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL);
+        $table->add_field('type',     XMLDB_TYPE_CHAR,    '20', null, XMLDB_NOTNULL);
+        $table->add_field('timesent', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, null, '0');
+        $table->add_key('primary', XMLDB_KEY_PRIMARY, ['id']);
+        if (!$dbman->table_exists($table)) {
+            $dbman->create_table($table);
+        }
+        $index = new xmldb_index('uniq_rule_user_type', XMLDB_INDEX_UNIQUE, ['ruleid', 'userid', 'type']);
+        if (!$dbman->index_exists($table, $index)) {
+            $dbman->add_index($table, $index);
+        }
+
+        upgrade_plugin_savepoint(true, 2026072300, 'local', 'asyncwatch');
+    }
+
+    if ($oldversion < 2026072309) {
+
+        // Cohort targeting for course-level rules — parallel to the
+        // existing group tables. Additive only.
+
+        // 1. asyncwatch_ruleset_cohorts
+        $table = new xmldb_table('asyncwatch_ruleset_cohorts');
+        $table->add_field('id',        XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, XMLDB_SEQUENCE);
+        $table->add_field('rulesetid', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL);
+        $table->add_field('cohortid',  XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL);
+        $table->add_key('primary', XMLDB_KEY_PRIMARY, ['id']);
+        if (!$dbman->table_exists($table)) {
+            $dbman->create_table($table);
+        }
+        $index = new xmldb_index('uniq_rulesetid_cohortid', XMLDB_INDEX_UNIQUE, ['rulesetid', 'cohortid']);
+        if (!$dbman->index_exists($table, $index)) {
+            $dbman->add_index($table, $index);
+        }
+
+        // 2. asyncwatch_rule_cohort_overrides
+        $table = new xmldb_table('asyncwatch_rule_cohort_overrides');
+        $table->add_field('id',           XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, XMLDB_SEQUENCE);
+        $table->add_field('ruleid',       XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL);
+        $table->add_field('cohortid',     XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL);
+        $table->add_field('deadline',     XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL);
+        $table->add_field('warn_hours',   XMLDB_TYPE_INTEGER, '10', null, false, null, '0');
+        $table->add_field('timecreated',  XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, null, '0');
+        $table->add_field('timemodified', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, null, '0');
+        $table->add_key('primary', XMLDB_KEY_PRIMARY, ['id']);
+        if (!$dbman->table_exists($table)) {
+            $dbman->create_table($table);
+        }
+        $index = new xmldb_index('uniq_ruleid_cohortid', XMLDB_INDEX_UNIQUE, ['ruleid', 'cohortid']);
+        if (!$dbman->index_exists($table, $index)) {
+            $dbman->add_index($table, $index);
+        }
+
+        upgrade_plugin_savepoint(true, 2026072309, 'local', 'asyncwatch');
+    }
+
     return true;
 }
-
-
-// NOTE: append before the final "return true;" — handled by replacing below

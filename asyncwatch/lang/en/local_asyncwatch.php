@@ -19,9 +19,11 @@ $string['report']               = 'Async Progress Monitor: Progress Report';
 $string['tab_parts']            = 'Parts';
 $string['tab_rules']            = 'Rules';
 $string['tab_report']           = 'Report';
+$string['card_show_all_rules']  = 'Show all rules';
 
 // Parts UI
 $string['parts']                = 'Parts';
+$string['part']                 = 'Part';
 $string['addpart']              = 'Add part';
 $string['editpart']             = 'Edit part';
 $string['deletepart']           = 'Delete part';
@@ -49,6 +51,7 @@ $string['editrule']             = 'Edit rule';
 $string['deleterule']           = 'Delete rule';
 $string['rulename']             = 'Rule name';
 $string['rulename_help']        = 'A label for this rule (e.g. "Checkpoint 1").';
+$string['rule_name_duplicate']  = 'A rule with this name already exists in this course. Please choose a different name.';
 $string['parts_required']       = 'Parts required';
 $string['parts_required_help']  = 'How many parts must be fully completed by the deadline.';
 $string['deadline']             = 'Deadline';
@@ -127,6 +130,7 @@ $string['error_nocourse']       = 'Invalid course ID.';
 $string['error_nopermission']   = 'You do not have permission to manage Async Progress Monitor for this course.';
 $string['asyncwatch:manage']    = 'Manage Async Progress Monitor parts and rules';
 $string['asyncwatch:viewreport']= 'View Async Progress Monitor progress report';
+$string['asyncwatch:manageglobal'] = 'Manage cross-course Async Progress Monitor rules';
 
 // Notifications tab
 $string['tab_notifications']        = 'Notifications';
@@ -134,12 +138,13 @@ $string['notifications']            = 'Async Progress Monitor: Notifications';
 $string['tpl_saved']                = 'Notification templates saved.';
 $string['tpl_learner_heading']      = 'Learner email';
 $string['tpl_learner_desc']         = 'Sent to the learner when a rule they are behind on is triggered.';
-$string['tpl_staff_heading']        = 'Staff email';
-$string['tpl_staff_desc']           = 'Sent to selected staff members when a rule is triggered for any learner.';
+$string['tpl_staff_heading']        = 'Staff report';
+$string['tpl_staff_desc']           = 'Sent once to selected staff members when a rule is triggered, with a CSV of every affected learner attached.';
 $string['email_subject']            = 'Subject';
 $string['email_body']               = 'Body';
 $string['staff_recipients']         = 'Staff recipients';
-$string['staff_recipients_desc']    = 'Choose who receives the staff email.';
+$string['staff_recipients_desc']    = 'Choose who receives the staff report email.';
+$string['staff_digest_note']        = 'This is sent once per rule as a single report, not per student. The affected students are listed in a CSV attachment, not in the email body — use the placeholders below for a short summary only.';
 $string['recipient_by_role']        = 'By role';
 $string['recipient_by_cohort']      = 'By cohort';
 $string['recipient_by_user']        = 'Individual users';
@@ -158,6 +163,102 @@ $string['ph_parts_required']        = 'Number of parts required by this rule';
 $string['ph_deadline']              = 'Rule deadline (formatted date)';
 $string['ph_rulename']              = 'Name of the rule that triggered';
 $string['ph_sitename']              = 'Site name';
+$string['ph_affected_count']        = 'Number of students included in this report (staff report only)';
+
+// Admin settings — staff report wording (site-wide, not per-course).
+$string['staffreportheading']       = 'Staff report emails';
+$string['staffreportheading_desc']  = 'AsyncWatch sends staff one report email per rule per run (with a CSV of affected students attached), not per-course custom text. Configure the two report templates below — placeholders: {{coursename}}, {{rulename}}, {{deadline}}, {{sitename}}, {{affected_count}}.';
+$string['staff_breach_subject']     = 'Behind report — subject';
+$string['staff_breach_subject_desc'] = 'Subject line for the staff report sent when learners have passed a rule\'s deadline.';
+$string['staff_breach_body']        = 'Behind report — body';
+$string['staff_breach_body_desc']   = 'Body text for the staff report sent when learners have passed a rule\'s deadline. The affected students are listed in the attached CSV, not in this text.';
+$string['staff_warning_subject']    = 'At-risk report — subject';
+$string['staff_warning_subject_desc'] = 'Subject line for the staff report sent when learners enter a rule\'s warning window.';
+$string['staff_warning_body']       = 'At-risk report — body';
+$string['staff_warning_body_desc']  = 'Body text for the staff report sent when learners enter a rule\'s warning window. The affected students are listed in the attached CSV, not in this text.';
+$string['staff_report_settings_link'] = 'The wording for staff report emails (Behind / At-risk) is configured site-wide in Site administration → Plugins → Local plugins → AsyncWatch, not per course.';
+
+// Admin settings — cross-course rule wording (site-wide; these rules have
+// no single course of their own, so both learner and staff wording live
+// here rather than in any course's Notifications tab).
+$string['ph_courses']                    = 'Comma-separated list of the rule\'s courses';
+$string['globalruleemailheading']        = 'Cross-course rule emails';
+$string['globalruleemailheading_desc']   = 'Wording for rules that span multiple courses (Site administration → AsyncWatch → Cross-course Rules). These rules don\'t belong to one course, so this is the only place to set their wording — placeholders: {{courses}}, {{rulename}}, {{deadline}}, {{sitename}}, {{affected_count}}, plus {{firstname}}, {{lastname}}, {{fullname}}, {{email}}, {{parts_done}}, {{parts_required}} for the learner templates.';
+$string['global_learner_breach_subject']       = 'Learner behind email — subject';
+$string['global_learner_breach_subject_desc']  = 'Subject line for the personal email sent to a learner who has passed a cross-course rule\'s deadline.';
+$string['global_learner_breach_body']          = 'Learner behind email — body';
+$string['global_learner_breach_body_desc']     = 'Body text for the personal email sent to a learner who has passed a cross-course rule\'s deadline.';
+$string['global_learner_warning_subject']      = 'Learner at-risk email — subject';
+$string['global_learner_warning_subject_desc'] = 'Subject line for the personal email sent to a learner entering a cross-course rule\'s warning window.';
+$string['global_learner_warning_body']         = 'Learner at-risk email — body';
+$string['global_learner_warning_body_desc']    = 'Body text for the personal email sent to a learner entering a cross-course rule\'s warning window.';
+$string['global_staff_breach_subject']         = 'Staff behind report — subject';
+$string['global_staff_breach_subject_desc']    = 'Subject line for the staff report sent when learners have passed a cross-course rule\'s deadline.';
+$string['global_staff_breach_body']            = 'Staff behind report — body';
+$string['global_staff_breach_body_desc']       = 'Body text for the staff report sent when learners have passed a cross-course rule\'s deadline. The affected students are listed in the attached CSV, not in this text.';
+$string['global_staff_warning_subject']        = 'Staff at-risk report — subject';
+$string['global_staff_warning_subject_desc']   = 'Subject line for the staff report sent when learners enter a cross-course rule\'s warning window.';
+$string['global_staff_warning_body']           = 'Staff at-risk report — body';
+$string['global_staff_warning_body_desc']      = 'Body text for the staff report sent when learners enter a cross-course rule\'s warning window. The affected students are listed in the attached CSV, not in this text.';
+
+// Default templates — cross-course rules.
+$string['tpl_global_learner_subject_default']         = 'Progress reminder: {{courses}}';
+$string['tpl_global_learner_body_default']            = 'Dear {{firstname}},
+
+This is a reminder about your progress across {{courses}}.
+
+You have completed {{parts_done}} of {{parts_required}} required parts by the deadline of {{deadline}}.
+
+Please log in and continue your studies as soon as possible.
+
+If you have any questions, please contact your course administrator.';
+$string['tpl_global_learner_warning_subject_default'] = 'Reminder: Please keep up with {{courses}}';
+$string['tpl_global_learner_warning_body_default']    = 'Dear {{firstname}},
+
+This is a friendly reminder about your progress across {{courses}}.
+
+You have completed {{parts_done}} of {{parts_required}} required parts, and the deadline of {{deadline}} is approaching.
+
+Please log in and continue working through the course materials as soon as possible.
+
+If you have any questions, please contact your course administrator.';
+$string['tpl_global_staff_subject_default']           = 'AsyncWatch Alert: {{rulename}} - {{courses}}';
+$string['tpl_global_staff_body_default']              = 'This is an automated alert from AsyncWatch.
+
+The attached CSV contains all users who are behind for {{courses}} regarding "{{rulename}}".';
+$string['tpl_global_staff_warning_subject_default']   = 'AsyncWatch Alert: {{rulename}} - {{courses}}';
+$string['tpl_global_staff_warning_body_default']      = 'This is an automated alert from AsyncWatch.
+
+The attached CSV contains all users who are at risk of falling behind for {{courses}} regarding "{{rulename}}".';
+
+// Cross-course Rules — admin page + form (Site administration → AsyncWatch).
+$string['globalrules']                    = 'Cross-course Rules';
+$string['globalreport']                   = 'Cross-course Report';
+$string['globalrules_intro']              = 'Rules here span multiple courses at once — e.g. "10 parts total across Course A and Course B", regardless of how the completed parts are split between them. Parts are still defined per-course as usual; this page only adds a rule layer on top.';
+$string['addglobalrule']                  = 'Add cross-course rule';
+$string['editglobalrule']                 = 'Edit cross-course rule';
+$string['deleteglobalrule']               = 'Delete cross-course rule';
+$string['globalrulesaved']                = 'Cross-course rule saved.';
+$string['globalruledeleted']              = 'Cross-course rule deleted.';
+$string['globalruledeleteconfirm']        = 'Delete this cross-course rule? This cannot be undone.';
+$string['noglobalrules']                  = 'No cross-course rules yet.';
+$string['globalrule_courses']             = 'Courses';
+$string['globalrule_courses_desc']        = 'Only courses with Parts defined are listed — a course needs at least one Part before it can contribute to a cross-course rule.';
+$string['globalrule_courses_required']    = 'Select at least one course.';
+$string['globalrule_nocourses']           = 'No courses have Parts defined yet. Set up Parts in a course first, then it will appear here.';
+$string['globalrule_totalparts_prefix']   = 'Total parts in selected courses:';
+$string['globalrule_partsrequired_desc']  = 'The absolute number of parts a learner must complete, added up across all selected courses combined — it doesn\'t matter which course they come from.';
+$string['globalrule_partsrequired_min']   = 'Must be at least 1.';
+$string['globalrule_partsrequired_max']   = 'Cannot exceed the combined total of Parts in the selected courses ({$a}).';
+$string['globalrule_wording_note']        = 'Email wording for cross-course rules is configured site-wide in Site administration → Plugins → Local plugins → AsyncWatch.';
+$string['globalrule_cohorts']             = 'Target cohorts (optional)';
+$string['globalrule_cohorts_desc']        = 'Leave empty to include anyone enrolled in the selected courses. Choose one or more cohorts to restrict the rule to just those members, who must also be enrolled in at least one of the selected courses.';
+$string['globalrule_col_courses']         = 'Courses';
+$string['globalrule_col_cohorts']         = 'Cohorts';
+$string['globalrule_overrides_link']      = 'Cohort overrides';
+$string['globalrule_recipients']          = 'Staff recipients';
+$string['globalrule_recipients_desc']     = 'These staff receive the report email (with CSV attached) for every cross-course rule, warning and behind alike. Shared by all cross-course rules — set per-rule recipients aren\'t available for these.';
+$string['globalrule_recipients_saved']    = 'Staff recipients saved.';
 
 // Default templates
 $string['tpl_learner_subject_default'] = 'Progress reminder: {{coursename}}';
@@ -171,16 +272,10 @@ Please log in and continue your studies as soon as possible.
 
 If you have any questions, please contact your course administrator.';
 
-$string['tpl_staff_subject_default']   = 'Async Progress Monitor alert: {{fullname}} — {{coursename}}';
-$string['tpl_staff_body_default']      = 'This is an automated alert from Async Progress Monitor.
+$string['tpl_staff_subject_default']   = 'AsyncWatch Alert: {{rulename}} - {{coursename}}';
+$string['tpl_staff_body_default']      = 'This is an automated alert from AsyncWatch.
 
-Learner: {{fullname}} ({{email}})
-Course: {{coursename}}
-Rule: {{rulename}}
-Progress: {{parts_done}} of {{parts_required}} sections complete
-Deadline: {{deadline}}
-
-Please review this learner\'s progress.';
+The attached CSV contains all users who are behind for {{coursename}} regarding "{{rulename}}".';
 
 // Rule form — notify_enabled
 $string['notify_enabled']           = 'Enable notifications';
@@ -217,16 +312,10 @@ Please log in and continue working through the course materials as soon as possi
 
 If you have any questions, please contact your course administrator.';
 
-$string['tpl_staff_warning_subject_default']   = 'Async Progress Monitor at-risk alert: {{fullname}} — {{coursename}}';
-$string['tpl_staff_warning_body_default']      = 'This is an automated at-risk alert from Async Progress Monitor.
+$string['tpl_staff_warning_subject_default']   = 'AsyncWatch Alert: {{rulename}} - {{coursename}}';
+$string['tpl_staff_warning_body_default']      = 'This is an automated alert from AsyncWatch.
 
-Learner: {{fullname}} ({{email}})
-Course: {{coursename}}
-Rule: {{rulename}}
-Progress: {{parts_done}} of {{parts_required}} sections complete
-Deadline: {{deadline}}
-
-This learner is approaching their deadline and may need support.';
+The attached CSV contains all users who are at risk of falling behind for {{coursename}} regarding "{{rulename}}".';
 
 // Bulk delete
 $string['bulkdelete']                 = 'Delete selected';
@@ -248,6 +337,9 @@ $string['ruleset_rules']               = 'Rules in this set';
 $string['ruleset_rules_desc']          = 'Select which rules belong to this set. A rule can only belong to one set at a time.';
 $string['ruleset_groups']              = 'Course groups';
 $string['ruleset_groups_desc']         = 'Select which course groups this rule set applies to. Global rules (not assigned to any set) still apply to all learners regardless of these assignments.';
+$string['ruleset_cohorts']             = 'Cohorts';
+$string['ruleset_cohorts_desc']        = 'Optionally, also select site cohorts this rule set applies to — a learner in either a selected group or a selected cohort is in scope.';
+$string['ruleset_nocohorts']           = 'No cohorts exist on this site yet.';
 $string['norulesets']                  = 'No Rule Sets have been defined yet. Click "Add Rule Set" to get started.';
 $string['rulesetsaved']                = 'Rule Set saved successfully.';
 $string['rulesetdeleted']              = 'Rule Set deleted successfully.';
@@ -267,7 +359,9 @@ $string['filter_ruleset_all']          = 'All Rule Sets';
 $string['overrides_title']          = 'Group Deadline Overrides';
 $string['overrides']                = 'Group Overrides';
 $string['overrides_count']          = '{$a} group override(s)';
+$string['overrides_count_cohort']   = '{$a} cohort override(s)';
 $string['addoverride']              = 'Add group override';
+$string['addoverride_cohort']       = 'Add cohort override';
 $string['editoverride']             = 'Edit group override';
 $string['nooverrides']              = 'No group overrides defined. The default rule deadline applies to all learners.';
 $string['overridesaved']            = 'Override saved successfully.';
@@ -277,6 +371,7 @@ $string['override_default_deadline']= 'Default deadline';
 $string['override_default_desc']    = 'Groups without an override use this deadline and warning.';
 $string['override_deadline']        = 'Override Deadline';
 $string['override_active']          = 'This learner has a group deadline override';
+$string['override_active_cohort']   = 'This learner has a cohort deadline override';
 $string['override_none']            = 'Default';
 $string['filter_override']          = 'Override';
 $string['filter_override_all']      = 'All';
@@ -284,9 +379,16 @@ $string['filter_override_active']   = 'Override active';
 $string['filter_override_default']  = 'Default deadline';
 $string['backtoruleslist']          = 'Back to Rules';
 $string['deletedgroup']             = '(Deleted group)';
+$string['deletedcohort']            = '(Deleted cohort)';
+$string['overrides_title_cohort']        = 'Cohort Deadline Overrides';
+$string['override_default_desc_cohort']  = 'Cohorts without an override use this deadline and warning.';
+$string['globalrule_nocohorts_for_override'] = 'There are no cohorts on this site yet — create one first (Site administration → Users → Cohorts) before adding a cohort override.';
+$string['globalrule_override_anycohort_note'] = 'This rule isn\'t restricted to specific cohorts, so an override here will only affect the users who happen to be in the chosen cohort and also enrolled in one of the rule\'s courses.';
 
 $string['filter_group']     = 'Group';
 $string['filter_group_all'] = 'All groups';
+$string['filter_cohort']     = 'Cohort';
+$string['filter_cohort_all'] = 'All cohorts';
 
 $string['part_progress'] = 'Part progress';
 

@@ -21,6 +21,7 @@ $filter_userid    = optional_param('userid',         0,  PARAM_INT);
 $filter_status    = optional_param('filterstatus',   '', PARAM_ALPHA);
 $filter_rulesetid = optional_param('rulesetid',      0,  PARAM_INT);
 $filter_groupid   = optional_param('filtergroupid',  0,  PARAM_INT);
+$filter_cohortid  = optional_param('filtercohortid', 0,  PARAM_INT);
 $filter_override  = optional_param('filteroverride', '', PARAM_ALPHA);
 $download         = optional_param('download',       '', PARAM_ALPHA);
 
@@ -35,7 +36,10 @@ require_capability('local/asyncwatch:viewreport', $context);
 $parts     = helper::get_parts($courseid);
 $now       = time();
 $all_rules = helper::get_rules($courseid);
-$students  = get_enrolled_users($context, '', 0, 'u.id, u.firstname, u.lastname, u.email, u.lastaccess');
+$students  = get_enrolled_users($context, '', 0,
+    'u.id, u.firstname, u.lastname, u.email, u.lastaccess, '
+    . 'u.firstnamephonetic, u.lastnamephonetic, u.middlename, u.alternatename'
+);
 
 function aw_row_status(\stdClass $rule, int $done, int $now, int $eff_deadline, int $eff_warn): string {
     if ($done >= $rule->parts_required) return 'completed';
@@ -49,18 +53,20 @@ foreach ($students as $user) {
     $user_progress[$user->id] = helper::get_user_progress($courseid, (int)$user->id);
 }
 
-// ── Pre-load rule set memberships + group memberships for filtering ────────────
+// ── Pre-load rule set memberships + group/cohort memberships for filtering ──────
 // Mirrors the cron task's logic so the report only shows users against rules
-// that actually apply to them (set-assigned rules → group members only;
-// global rules → all enrolled users).
-$rule_to_rulesetid  = []; // [ruleid => rulesetid|0]
-$ruleset_to_groupids = []; // [rulesetid => [groupid, ...]]
+// that actually apply to them (set-assigned rules → group/cohort members
+// only; global rules → all enrolled users).
+$rule_to_rulesetid   = []; // [ruleid => rulesetid|0]
+$ruleset_to_groupids  = []; // [rulesetid => [groupid, ...]]
+$ruleset_to_cohortids = []; // [rulesetid => [cohortid, ...]]
 foreach ($all_rules as $rule) {
     $srec = $DB->get_record('asyncwatch_ruleset_rules', ['ruleid' => $rule->id], 'rulesetid');
     $rule_to_rulesetid[$rule->id] = $srec ? (int)$srec->rulesetid : 0;
 }
 foreach (array_unique(array_filter(array_values($rule_to_rulesetid))) as $rsid) {
-    $ruleset_to_groupids[$rsid] = helper::get_ruleset_groupids($rsid);
+    $ruleset_to_groupids[$rsid]  = helper::get_ruleset_groupids($rsid);
+    $ruleset_to_cohortids[$rsid] = helper::get_ruleset_cohortids($rsid);
 }
 
 // Pre-load all user group memberships in one query.
@@ -81,18 +87,35 @@ if (!empty($all_user_ids)) {
     }
 }
 
+// Pre-load all user cohort memberships in one query (site-wide, no course filter).
+$user_cohortids_map = [];
+if (!empty($all_user_ids)) {
+    list($in_sql_c, $in_params_c) = $DB->get_in_or_equal($all_user_ids);
+    $cm_rows = $DB->get_records_sql(
+        "SELECT id, userid, cohortid FROM {cohort_members} WHERE userid $in_sql_c",
+        $in_params_c
+    );
+    foreach ($cm_rows as $cm) {
+        $user_cohortids_map[(int)$cm->userid][] = (int)$cm->cohortid;
+    }
+}
+
 $all_rows = [];
 foreach ($all_rules as $rule) {
     $rulesetid     = $rule_to_rulesetid[$rule->id];
-    $set_groupids  = $rulesetid ? ($ruleset_to_groupids[$rulesetid] ?? []) : [];
+    $set_groupids  = $rulesetid ? ($ruleset_to_groupids[$rulesetid]  ?? []) : [];
+    $set_cohortids = $rulesetid ? ($ruleset_to_cohortids[$rulesetid] ?? []) : [];
 
     foreach ($students as $user) {
         $uid        = (int)$user->id;
         $ugroups    = $user_groupids[$uid] ?? [];
+        $ucohorts   = $user_cohortids_map[$uid] ?? [];
 
-        // Apply the same filtering the cron uses:
-        // set-assigned rules only apply to users in the set's groups.
-        if ($rulesetid && !empty($set_groupids) && !array_intersect($ugroups, $set_groupids)) {
+        // Apply the same filtering the cron uses: set-assigned rules only
+        // apply to users in the set's groups OR the set's cohorts.
+        if ($rulesetid && (!empty($set_groupids) || !empty($set_cohortids))
+                && !array_intersect($ugroups, $set_groupids)
+                && !array_intersect($ucohorts, $set_cohortids)) {
             continue;
         }
 
@@ -113,6 +136,7 @@ foreach ($all_rules as $rule) {
             'has_override'  => $eff['override'] !== null,
             'override_warn' => $eff['override'] ? (int)$eff['override']->warn_hours : null,
             'groupids'      => $ugroups,
+            'cohortids'     => $ucohorts,
         ];
     }
 }
@@ -122,7 +146,7 @@ $rule_to_rulesets = $rule_to_rulesetid; // reuse for filter block below
 
 $rows = array_filter($all_rows, function($r) use (
     $filter_ruleid, $filter_userid, $filter_status,
-    $filter_rulesetid, $filter_override, $filter_groupid, $rule_to_rulesets
+    $filter_rulesetid, $filter_override, $filter_groupid, $filter_cohortid, $rule_to_rulesets
 ) {
     if ($filter_ruleid    && (int)$r->rule->id !== $filter_ruleid) return false;
     if ($filter_userid    && (int)$r->user->id !== $filter_userid) return false;
@@ -132,44 +156,18 @@ $rows = array_filter($all_rows, function($r) use (
     }
     if ($filter_override === 'override' && !$r->has_override) return false;
     if ($filter_override === 'default'  &&  $r->has_override) return false;
-    if ($filter_groupid && !in_array((string)$filter_groupid, array_map('strval', $r->groupids ?? []))) return false;
+    if ($filter_groupid  && !in_array((string)$filter_groupid,  array_map('strval', $r->groupids  ?? []))) return false;
+    if ($filter_cohortid && !in_array((string)$filter_cohortid, array_map('strval', $r->cohortids ?? []))) return false;
     return true;
 });
 
 // ── CSV export ────────────────────────────────────────────────────────────────
+// Shared with the automated staff digest emails sent from check_progress — see
+// helper::csv_header() / helper::csv_row() / helper::rows_to_csv().
 if ($download === 'csv') {
     header('Content-Type: text/csv');
     header('Content-Disposition: attachment; filename="asyncwatch_report_' . $courseid . '_' . date('Ymd') . '.csv"');
-    $out = fopen('php://output', 'w');
-
-    $header = [
-        get_string('rulename',       'local_asyncwatch'),
-        get_string('learner',        'local_asyncwatch'),
-        'Email',
-        get_string('parts_complete', 'local_asyncwatch'),
-        get_string('status',         'local_asyncwatch'),
-        get_string('last_activity',  'local_asyncwatch'),
-    ];
-    foreach ($parts as $part) {
-        $header[] = format_string($part->name);
-    }
-    fputcsv($out, $header);
-
-    foreach ($rows as $row) {
-        $line = [
-            format_string($row->rule->name),
-            fullname($row->user),
-            $row->user->email,
-            $row->done . ' of ' . $row->total,
-            get_string('status_' . $row->status, 'local_asyncwatch'),
-            $row->lastaccess ? userdate($row->lastaccess) : '—',
-        ];
-        foreach ($parts as $part) {
-            $line[] = ($row->parts[$part->id] ?? false) ? '1' : '0';
-        }
-        fputcsv($out, $line);
-    }
-    fclose($out);
+    echo helper::rows_to_csv($rows, $parts);
     exit;
 }
 
@@ -260,6 +258,27 @@ if (!empty($all_groups_for_filter)) {
     echo '</select></div>';
 }
 
+// Cohort filter — only offer cohorts that at least one enrolled student is
+// actually in, so the list doesn't fill up with irrelevant site cohorts.
+$cohorts_present = [];
+foreach ($user_cohortids_map as $cids) {
+    foreach ($cids as $cid) {
+        $cohorts_present[$cid] = true;
+    }
+}
+if (!empty($cohorts_present)) {
+    $all_cohorts_for_filter = helper::get_all_cohorts();
+    echo '<div class="mr-2 mb-2"><label class="d-block small font-weight-bold mb-1" for="filter_cohortid">' . get_string('filter_cohort', 'local_asyncwatch') . '</label>';
+    echo '<select name="filtercohortid" id="filter_cohortid" class="custom-select me-2 mb-2">';
+    echo '<option value="0">' . get_string('filter_cohort_all', 'local_asyncwatch') . '</option>';
+    foreach ($all_cohorts_for_filter as $ch) {
+        if (!isset($cohorts_present[(int)$ch->id])) continue;
+        $sel = ($filter_cohortid === (int)$ch->id) ? ' selected' : '';
+        echo '<option value="' . (int)$ch->id . '"' . $sel . '>' . s(format_string($ch->name)) . '</option>';
+    }
+    echo '</select></div>';
+}
+
 // Status filter.
 echo '<div class="mr-2 mb-2"><label class="d-block small font-weight-bold mb-1" for="filter_status">' . get_string('filter_status', 'local_asyncwatch') . '</label>';
 echo '<select name="filterstatus" id="filter_status" class="custom-select me-2 mb-2">';
@@ -288,20 +307,51 @@ if (!empty($all_rulesets_for_filter)) {
     echo '</select></div>';
 }
 
+// Build the CSV export URL from the current filters — shared with the
+// button below and with the staff digest emails (helper::rows_to_csv()).
+$csv_params = ['courseid' => $courseid, 'download' => 'csv'];
+if ($filter_ruleid)    $csv_params['ruleid']        = $filter_ruleid;
+if ($filter_userid)    $csv_params['userid']        = $filter_userid;
+if ($filter_status)    $csv_params['filterstatus']  = $filter_status;
+if ($filter_rulesetid) $csv_params['rulesetid']     = $filter_rulesetid;
+if ($filter_groupid)   $csv_params['filtergroupid'] = $filter_groupid;
+if ($filter_cohortid)  $csv_params['filtercohortid']= $filter_cohortid;
+if ($filter_override)  $csv_params['filteroverride']= $filter_override;
+$csv_url = new moodle_url('/local/asyncwatch/report.php', $csv_params);
+
 echo '<div class="mb-2">';
 echo '<button type="submit" class="btn btn-primary me-2 mb-2">' . get_string('applyfilter', 'local_asyncwatch') . '</button>';
-if ($filter_ruleid || $filter_userid || $filter_status || $filter_rulesetid || $filter_override || $filter_groupid) {
+echo html_writer::link($csv_url, get_string('exportcsv', 'local_asyncwatch'), ['class' => 'btn btn-secondary me-2 mb-2']);
+if ($filter_ruleid || $filter_userid || $filter_status || $filter_rulesetid || $filter_override || $filter_groupid || $filter_cohortid) {
     echo ' <a href="' . $pageurl->out(false) . '" class="btn btn-link btn-sm">' . get_string('clearfilter', 'local_asyncwatch') . '</a>';
 }
 echo '</div>';
 echo '</div></form>';
 
 // ── Summary dashboard ────────────────────────────────────────────────────────
-// Build per-rule stats from the filtered rows.
-if (!empty($rows)) {
+// Card counts should reflect every active filter EXCEPT the status pills
+// themselves — otherwise clicking "Behind" makes every other pill show 0,
+// since the underlying rows would already be filtered down to breach-only.
+$rows_for_summary = array_filter($all_rows, function($r) use (
+    $filter_ruleid, $filter_userid, $filter_rulesetid, $filter_override,
+    $filter_groupid, $filter_cohortid, $rule_to_rulesets
+) {
+    if ($filter_ruleid    && (int)$r->rule->id !== $filter_ruleid) return false;
+    if ($filter_userid    && (int)$r->user->id !== $filter_userid) return false;
+    if ($filter_rulesetid) {
+        if (($rule_to_rulesets[$r->rule->id] ?? 0) !== $filter_rulesetid) return false;
+    }
+    if ($filter_override === 'override' && !$r->has_override) return false;
+    if ($filter_override === 'default'  &&  $r->has_override) return false;
+    if ($filter_groupid  && !in_array((string)$filter_groupid,  array_map('strval', $r->groupids  ?? []))) return false;
+    if ($filter_cohortid && !in_array((string)$filter_cohortid, array_map('strval', $r->cohortids ?? []))) return false;
+    return true;
+});
+
+if (!empty($rows_for_summary)) {
     // Aggregate counts per rule.
     $rule_stats = []; // [ruleid => ['rule'=>, 'completed'=>, 'ok'=>, 'warning'=>, 'breach'=>, 'total'=>]]
-    foreach ($rows as $row) {
+    foreach ($rows_for_summary as $row) {
         $rid = (int)$row->rule->id;
         if (!isset($rule_stats[$rid])) {
             $rule_stats[$rid] = [
@@ -333,6 +383,12 @@ if (!empty($rows)) {
     ];
 
     echo '<div class="aw-summary-dashboard mb-4">';
+    echo '<style>
+.aw-rule-card { transition: box-shadow 0.15s ease, border-color 0.15s ease; cursor: pointer; }
+.aw-rule-card:hover { border-color: #0D3C6F; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
+.aw-pill-badge { transition: filter 0.15s ease; }
+.aw-pill-link:hover .aw-pill-badge { filter: brightness(0.85); }
+</style>';
     echo '<div class="d-flex align-items-center justify-content-between mb-2">';
     echo '<span class="font-weight-bold text-muted small" style="text-transform:uppercase;letter-spacing:0.05em;">Rule Summary</span>';
     echo '<button type="button" id="aw-summary-toggle" class="btn btn-sm btn-link p-0" style="font-size:0.85em;">Hide summary</button>';
@@ -345,10 +401,33 @@ if (!empty($rows)) {
         $total  = $st['total'];
         $base_url = new moodle_url($pageurl, ['courseid' => $courseid, 'ruleid' => $rid]);
 
-        echo '<div class="card" style="min-width:220px;flex:1 1 220px;max-width:340px;">';
+        // If we're already scoped to exactly this rule with no other filters
+        // active, the card has nowhere further to take you — so instead of a
+        // no-op self-link, clicking it again clears the rule filter and goes
+        // back to the full "all rules" dashboard. Otherwise it scopes down
+        // to just this rule (dropping status/group/override/etc.), which is
+        // the "go up a level" behaviour for a status-pill or override click.
+        $already_just_this_rule = ($filter_ruleid === $rid)
+            && $filter_status === '' && $filter_userid === 0
+            && $filter_rulesetid === 0 && $filter_override === ''
+            && $filter_groupid === 0 && $filter_cohortid === 0;
+        $card_target = $already_just_this_rule
+            ? new moodle_url($pageurl, ['courseid' => $courseid])
+            : $base_url;
+        $card_label = $already_just_this_rule
+            ? get_string('card_show_all_rules', 'local_asyncwatch')
+            : format_string($rule->name);
+
+        echo '<div class="card aw-rule-card" style="min-width:220px;flex:1 1 220px;max-width:340px;position:relative;">';
+        // Whole-card click target — sits behind everything else so the pills,
+        // override badge, and progress-bar segments (which link to a more
+        // specific filter) remain independently clickable on top of it.
+        echo '<a href="' . s($card_target->out(false)) . '" aria-label="' . s($card_label) . '"'
+           . ' title="' . s($card_label) . '"'
+           . ' style="position:absolute;top:0;left:0;right:0;bottom:0;z-index:1;"></a>';
         echo '<div class="card-header py-2 px-3" style="background:#f8f9fa;">';
         echo '<div class="font-weight-bold" style="font-size:0.9em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="' . s(format_string($rule->name)) . '">';
-        echo '<a href="' . s($base_url->out(false)) . '" style="color:inherit;text-decoration:none;">' . s(format_string($rule->name)) . '</a>';
+        echo s(format_string($rule->name));
         if (!$rule->enabled) {
             echo ' <span class="badge badge-secondary bg-secondary" style="font-size:0.75em;">' . get_string('rule_disabled_badge', 'local_asyncwatch') . '</span>';
         }
@@ -357,7 +436,7 @@ if (!empty($rows)) {
         echo '<span class="text-muted" style="font-size:0.78em;">' . $total . ' ' . ($total === 1 ? get_string('learner', 'local_asyncwatch') : get_string('learners', 'local_asyncwatch')) . '</span>';
         if ($st['overrides'] > 0) {
             $ov_link = (new moodle_url($base_url, ['filteroverride' => 'override']))->out(false);
-            echo '<a href="' . s($ov_link) . '" style="text-decoration:none;">';
+            echo '<a href="' . s($ov_link) . '" style="text-decoration:none;position:relative;z-index:2;">';
             echo '<span class="badge badge-warning bg-warning" style="font-size:0.72em;font-weight:600;">' . $st['overrides'] . ' override' . ($st['overrides'] === 1 ? '' : 's') . ' active</span>';
             echo '</a>';
         }
@@ -374,7 +453,7 @@ if (!empty($rows)) {
             $pct   = round(100 * $count / $total, 2);
             $link  = (new moodle_url($base_url, ['filterstatus' => $skey]))->out(false);
             echo '<a href="' . s($link) . '" title="' . s($status_labels[$skey] . ': ' . $count) . '"'
-               . ' style="display:block;width:' . $pct . '%;background:' . $color . ';height:100%;"></a>';
+               . ' style="display:block;width:' . $pct . '%;background:' . $color . ';height:100%;position:relative;z-index:2;"></a>';
         }
         echo '</div>';
 
@@ -383,10 +462,12 @@ if (!empty($rows)) {
         foreach ($status_colors as $skey => $color) {
             $count = $st[$skey];
             $link  = (new moodle_url($base_url, ['filterstatus' => $skey]))->out(false);
-            $pct   = $total > 0 ? round(100 * $count / $total) : 0;
-            $opacity = $count === 0 ? 'opacity:0.35;' : '';
-            echo '<a href="' . s($link) . '" style="text-decoration:none;' . $opacity . '">';
-            echo '<span style="display:inline-flex;align-items:center;background:' . $color . ';color:' . ($skey === 'warning' ? '#333' : '#fff') . ';border-radius:3px;padding:1px 6px;font-size:0.75em;font-weight:600;white-space:nowrap;">';
+            // Fade a pill only when some status filter is active and this
+            // isn't the selected one — never fade based on a zero count, so
+            // the unfiltered view always shows every pill at full strength.
+            $opacity = ($filter_status !== '' && $filter_status !== $skey) ? 'opacity:0.35;' : '';
+            echo '<a href="' . s($link) . '" class="aw-pill-link" style="text-decoration:none;position:relative;z-index:2;' . $opacity . '">';
+            echo '<span class="aw-pill-badge" style="display:inline-flex;align-items:center;background:' . $color . ';color:' . ($skey === 'warning' ? '#333' : '#fff') . ';border-radius:3px;padding:1px 6px;font-size:0.75em;font-weight:600;white-space:nowrap;">';
             echo s($count) . ' ' . s($status_labels[$skey]);
             echo '</span></a>';
         }
@@ -420,13 +501,14 @@ if (empty($rows)) {
 } else {
     // Preserve filter params in table sort URLs.
     $filter_params = array_filter([
-        'courseid'      => $courseid,
-        'ruleid'        => $filter_ruleid,
-        'userid'        => $filter_userid,
-        'filterstatus'  => $filter_status,
-        'rulesetid'     => $filter_rulesetid,
-        'filtergroupid' => $filter_groupid,
-        'filteroverride'=> $filter_override,
+        'courseid'       => $courseid,
+        'ruleid'         => $filter_ruleid,
+        'userid'         => $filter_userid,
+        'filterstatus'   => $filter_status,
+        'rulesetid'      => $filter_rulesetid,
+        'filtergroupid'  => $filter_groupid,
+        'filtercohortid' => $filter_cohortid,
+        'filteroverride' => $filter_override,
     ]);
 
     $table = new flexible_table('asyncwatch-report-' . $courseid);
@@ -614,20 +696,6 @@ if (empty($rows)) {
 
     $table->finish_output();
 }
-
-// CSV export button.
-$csv_params = ['courseid' => $courseid, 'download' => 'csv'];
-if ($filter_ruleid)    $csv_params['ruleid']        = $filter_ruleid;
-if ($filter_userid)    $csv_params['userid']        = $filter_userid;
-if ($filter_status)    $csv_params['filterstatus']  = $filter_status;
-if ($filter_rulesetid) $csv_params['rulesetid']     = $filter_rulesetid;
-if ($filter_groupid)   $csv_params['filtergroupid'] = $filter_groupid;
-if ($filter_override)  $csv_params['filteroverride']= $filter_override;
-$csv_url = new moodle_url('/local/asyncwatch/report.php', $csv_params);
-echo html_writer::div(
-    html_writer::link($csv_url, get_string('exportcsv', 'local_asyncwatch'), ['class' => 'btn btn-secondary mt-3']),
-    'mt-3'
-);
 
 // Custom progress bar hover popup — fully controlled, no Bootstrap tooltip issues.
 echo '<style>

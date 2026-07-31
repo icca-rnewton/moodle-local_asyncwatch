@@ -55,8 +55,9 @@ if ($action === 'bulkdeleterulesets' && confirm_sesskey()) {
 }
 
 // ── Data for forms ────────────────────────────────────────────────────────────
-$all_rules  = helper::get_rules($courseid);
-$all_groups = groups_get_all_groups($courseid);
+$all_rules   = helper::get_rules($courseid);
+$all_groups  = groups_get_all_groups($courseid);
+$all_cohorts = helper::get_all_cohorts();
 
 // ── Render ────────────────────────────────────────────────────────────────────
 echo $OUTPUT->header();
@@ -76,14 +77,16 @@ echo $OUTPUT->tabtree($tabs, 'rulesets');
 if (in_array($action, ['addruleset', 'editruleset'])) {
 
     // Load existing data for edit.
-    $edit_name     = '';
-    $edit_ruleids  = [];
-    $edit_groupids = [];
+    $edit_name      = '';
+    $edit_ruleids   = [];
+    $edit_groupids  = [];
+    $edit_cohortids = [];
     if ($action === 'editruleset' && $id) {
-        $rs            = helper::get_rule_set($id);
-        $edit_name     = $rs->name;
-        $edit_ruleids  = helper::get_ruleset_ruleids($id);
-        $edit_groupids = helper::get_ruleset_groupids($id);
+        $rs             = helper::get_rule_set($id);
+        $edit_name      = $rs->name;
+        $edit_ruleids   = helper::get_ruleset_ruleids($id);
+        $edit_groupids  = helper::get_ruleset_groupids($id);
+        $edit_cohortids = helper::get_ruleset_cohortids($id);
     }
 
     $heading = $action === 'addruleset'
@@ -95,8 +98,9 @@ if (in_array($action, ['addruleset', 'editruleset'])) {
         'courseid' => $courseid, 'action' => $action, 'id' => $id,
     ]);
     $rs_form = new \local_asyncwatch\form\ruleset_form($form_url->out(false), [
-        'all_rules'  => $all_rules,
-        'all_groups' => $all_groups,
+        'all_rules'   => $all_rules,
+        'all_groups'  => $all_groups,
+        'all_cohorts' => $all_cohorts,
     ]);
 
     if ($rs_form->is_cancelled()) {
@@ -104,13 +108,15 @@ if (in_array($action, ['addruleset', 'editruleset'])) {
     }
 
     if ($data = $rs_form->get_data()) {
-        $ruleids  = optional_param_array('ruleset_rules',  [], PARAM_INT);
-        $groupids = optional_param_array('ruleset_groups', [], PARAM_INT);
-        $record   = (object)['courseid' => $courseid, 'name' => trim($data->ruleset_name)];
+        $ruleids   = optional_param_array('ruleset_rules',   [], PARAM_INT);
+        $groupids  = optional_param_array('ruleset_groups',  [], PARAM_INT);
+        $cohortids = optional_param_array('ruleset_cohorts', [], PARAM_INT);
+        $record    = (object)['courseid' => $courseid, 'name' => trim($data->ruleset_name)];
         if (!empty($data->rulesetid)) $record->id = (int)$data->rulesetid;
         $rulesetid = helper::save_rule_set($record);
-        helper::set_ruleset_rules( $rulesetid, $ruleids);
-        helper::set_ruleset_groups($rulesetid, $groupids);
+        helper::set_ruleset_rules(  $rulesetid, $ruleids);
+        helper::set_ruleset_groups( $rulesetid, $groupids);
+        helper::set_ruleset_cohorts($rulesetid, $cohortids);
         redirect($pageurl, get_string('rulesetsaved', 'local_asyncwatch'), null,
             \core\output\notification::NOTIFY_SUCCESS);
     }
@@ -125,19 +131,25 @@ if (in_array($action, ['addruleset', 'editruleset'])) {
     $rs_form->display();
 
     // Pre-tick checkboxes via JS (they're in static HTML so set_data won't reach them).
-    if (!empty($edit_ruleids) || !empty($edit_groupids)) {
-        $rule_ids_js  = json_encode(array_map('intval', $edit_ruleids));
-        $group_ids_js = json_encode(array_map('intval', $edit_groupids));
+    if (!empty($edit_ruleids) || !empty($edit_groupids) || !empty($edit_cohortids)) {
+        $rule_ids_js   = json_encode(array_map('intval', $edit_ruleids));
+        $group_ids_js  = json_encode(array_map('intval', $edit_groupids));
+        $cohort_ids_js = json_encode(array_map('intval', $edit_cohortids));
         echo '<script>
 (function() {
-    var ruleIds  = ' . $rule_ids_js . ';
-    var groupIds = ' . $group_ids_js . ';
+    var ruleIds   = ' . $rule_ids_js . ';
+    var groupIds  = ' . $group_ids_js . ';
+    var cohortIds = ' . $cohort_ids_js . ';
     ruleIds.forEach(function(id) {
         var cb = document.getElementById("rs_rule_" + id);
         if (cb) cb.checked = true;
     });
     groupIds.forEach(function(id) {
         var cb = document.getElementById("rs_grp_" + id);
+        if (cb) cb.checked = true;
+    });
+    cohortIds.forEach(function(id) {
+        var cb = document.getElementById("rs_cohort_" + id);
         if (cb) cb.checked = true;
     });
 })();
@@ -166,15 +178,17 @@ if (in_array($action, ['addruleset', 'editruleset'])) {
         $table->attributes['class'] = 'generaltable';
         $table->head = [
             html_writer::checkbox('selectall_rs', '1', false, '', ['id' => 'selectall-rs']),
-            get_string('rulesetname',   'local_asyncwatch'),
-            get_string('ruleset_rules', 'local_asyncwatch'),
-            get_string('ruleset_groups','local_asyncwatch'),
+            get_string('rulesetname',    'local_asyncwatch'),
+            get_string('ruleset_rules',  'local_asyncwatch'),
+            get_string('ruleset_groups', 'local_asyncwatch'),
+            get_string('ruleset_cohorts','local_asyncwatch'),
             get_string('actions'),
         ];
 
         foreach ($rulesets as $rs) {
-            $ruleids  = helper::get_ruleset_ruleids((int)$rs->id);
-            $groupids = helper::get_ruleset_groupids((int)$rs->id);
+            $ruleids   = helper::get_ruleset_ruleids((int)$rs->id);
+            $groupids  = helper::get_ruleset_groupids((int)$rs->id);
+            $cohortids = helper::get_ruleset_cohortids((int)$rs->id);
 
             // Rule names.
             $rule_names = [];
@@ -192,6 +206,14 @@ if (in_array($action, ['addruleset', 'editruleset'])) {
                 }
             }
 
+            // Cohort names.
+            $cohort_names = [];
+            foreach ($cohortids as $cid) {
+                if (isset($all_cohorts[$cid])) {
+                    $cohort_names[] = format_string($all_cohorts[$cid]->name);
+                }
+            }
+
             $edit_url   = new moodle_url($pageurl, ['action' => 'editruleset',   'id' => $rs->id]);
             $delete_url = new moodle_url($pageurl, ['action' => 'deleteruleset', 'id' => $rs->id, 'sesskey' => sesskey()]);
 
@@ -203,8 +225,9 @@ if (in_array($action, ['addruleset', 'editruleset'])) {
             $table->data[] = [
                 html_writer::checkbox('bulkids[]', $rs->id, false, '', ['class' => 'bulk-checkbox-rs']),
                 format_string($rs->name),
-                empty($rule_names)  ? html_writer::tag('em', get_string('none')) : implode(', ', $rule_names),
-                empty($group_names) ? html_writer::tag('em', get_string('none')) : implode(', ', $group_names),
+                empty($rule_names)   ? html_writer::tag('em', get_string('none')) : implode(', ', $rule_names),
+                empty($group_names)  ? html_writer::tag('em', get_string('none')) : implode(', ', $group_names),
+                empty($cohort_names) ? html_writer::tag('em', get_string('none')) : implode(', ', $cohort_names),
                 $actions,
             ];
         }
