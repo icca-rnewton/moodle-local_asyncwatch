@@ -33,12 +33,23 @@ class check_progress extends scheduled_task {
 
         $rules = $DB->get_records('asyncwatch_rules', ['enabled' => 1]);
         foreach ($rules as $rule) {
-            $this->process_rule($rule, $now, $site_name);
+            try {
+                $this->process_rule($rule, $now, $site_name);
+            } catch (\Throwable $e) {
+                // One malformed/broken rule shouldn't take the rest of the
+                // run down with it — log it (visible in Site admin >
+                // Server > Tasks > Task logs) and move on to the next rule.
+                mtrace("  AsyncWatch: rule {$rule->id} ('{$rule->name}') failed and was skipped this run: " . $e->getMessage());
+            }
         }
 
         $global_rules = $DB->get_records('asyncwatch_global_rules', ['enabled' => 1]);
         foreach ($global_rules as $rule) {
-            $this->process_global_rule($rule, $now, $site_name);
+            try {
+                $this->process_global_rule($rule, $now, $site_name);
+            } catch (\Throwable $e) {
+                mtrace("  AsyncWatch: global rule {$rule->id} ('{$rule->name}') failed and was skipped this run: " . $e->getMessage());
+            }
         }
     }
 
@@ -47,10 +58,7 @@ class check_progress extends scheduled_task {
 
         $courseid = (int)$rule->courseid;
         $context  = \context_course::instance($courseid);
-        $all_students = get_enrolled_users($context, '', 0,
-            'u.id, u.firstname, u.lastname, u.email, u.lastaccess, '
-            . 'u.firstnamephonetic, u.lastnamephonetic, u.middlename, u.alternatename'
-        );
+        $all_students = helper::get_active_learners($context);
 
         if (empty($all_students)) return;
 
@@ -182,7 +190,7 @@ class check_progress extends scheduled_task {
             $userid = (int)$user->id;
 
             // Compute effective deadline from pre-loaded data.
-            $eff = $this->effective_deadline_from_cache(
+            $eff = helper::effective_deadline_from_cache(
                 $rule, $userid,
                 $user_groups[$userid] ?? [], $overrides_by_group,
                 $user_cohorts[$userid] ?? [], $overrides_by_cohort
@@ -291,7 +299,7 @@ class check_progress extends scheduled_task {
             '{{affected_count}}' => count($rows),
         ];
         $subject = self::render_template($subject_tpl, $vars);
-        $body    = self::render_template($body_tpl, $vars);
+        $body    = self::render_template($body_tpl, $vars, true);
         if (!$subject || !$body) return;
 
         $csv_path   = helper::write_csv_tempfile($rows, $parts, 'asyncwatch_' . $type . '_rule' . $rule->id);
@@ -481,7 +489,7 @@ class check_progress extends scheduled_task {
             '{{courses}}'        => $courses_str,
             '{{parts_done}}'     => $done,
             '{{parts_required}}' => $rule->parts_required,
-            '{{deadline}}'       => userdate($deadline),
+            '{{deadline}}'       => helper::user_date($deadline, $user),
             '{{rulename}}'       => $rule->name,
             '{{sitename}}'       => $site_name,
         ];
@@ -505,10 +513,10 @@ class check_progress extends scheduled_task {
 
         $vars    = $this->build_global_vars($user, $rule, $done, $total, $deadline, $site_name, $courses_str);
         $subject = self::render_template($subject_tpl, $vars);
-        $body    = self::render_template($body_tpl, $vars);
+        $body    = self::render_template($body_tpl, $vars, true);
         if (!$subject || !$body) return;
 
-        if (helper::send_email($user, $subject, $body)) {
+        if (helper::send_message($user, $subject, $body)) {
             helper::record_global_notification((int)$rule->id, (int)$user->id, 'breach');
             $already_sent[$key] = true;
             mtrace("  AsyncWatch: breach email → learner {$user->id} global rule {$rule->id}");
@@ -536,10 +544,10 @@ class check_progress extends scheduled_task {
 
         $vars    = $this->build_global_vars($user, $rule, $done, $total, $deadline, $site_name, $courses_str);
         $subject = self::render_template($subject_tpl, $vars);
-        $body    = self::render_template($body_tpl, $vars);
+        $body    = self::render_template($body_tpl, $vars, true);
         if (!$subject || !$body) return;
 
-        if (helper::send_email($user, $subject, $body)) {
+        if (helper::send_message($user, $subject, $body)) {
             helper::record_global_notification((int)$rule->id, (int)$user->id, 'warning');
             $already_sent[$key] = true;
             mtrace("  AsyncWatch: warning email → learner {$user->id} global rule {$rule->id}");
@@ -569,7 +577,7 @@ class check_progress extends scheduled_task {
             '{{affected_count}}'  => count($rows),
         ];
         $subject = self::render_template($subject_tpl, $vars);
-        $body    = self::render_template($body_tpl, $vars);
+        $body    = self::render_template($body_tpl, $vars, true);
         if (!$subject || !$body) return;
 
         $csv_path   = helper::write_global_csv_tempfile($rows, 'asyncwatch_global_' . $type . '_rule' . $rule->id);
@@ -594,49 +602,6 @@ class check_progress extends scheduled_task {
     }
 
     /**
-     * Compute effective deadline/warn using pre-loaded group and override data.
-     * No DB queries — pure memory lookups.
-     */
-    private function effective_deadline_from_cache(
-        \stdClass $rule,
-        int $userid,
-        array $groupids,
-        array $overrides_by_group,
-        array $cohortids = [],
-        array $overrides_by_cohort = []
-    ): array {
-        $best = null;
-        foreach ($groupids as $gid) {
-            if (!isset($overrides_by_group[$gid])) continue;
-            $ov = $overrides_by_group[$gid];
-            if ($best === null || (int)$ov->deadline > (int)$best->deadline) {
-                $best = $ov;
-            }
-        }
-        foreach ($cohortids as $cid) {
-            if (!isset($overrides_by_cohort[$cid])) continue;
-            $ov = $overrides_by_cohort[$cid];
-            if ($best === null || (int)$ov->deadline > (int)$best->deadline) {
-                $best = $ov;
-            }
-        }
-
-        if ($best) {
-            return [
-                'deadline'   => (int)$best->deadline,
-                'warn_hours' => (int)$best->warn_hours,
-                'override'   => $best,
-            ];
-        }
-        return [
-            'deadline'   => (int)$rule->deadline,
-            'warn_hours' => (int)$rule->warn_hours,
-            'override'   => null,
-
-        ];
-    }
-
-    /**
      * Send the learner's personal "behind" email, if enabled and not already sent.
      * Staff are handled separately via send_staff_digest() — see process_rule().
      */
@@ -656,10 +621,10 @@ class check_progress extends scheduled_task {
 
         $vars    = $this->build_vars($user, $course, $rule, $done, $total, $deadline, $site_name);
         $subject = self::render_template($tpl->learner_subject, $vars);
-        $body    = self::render_template($tpl->learner_body ?? '', $vars);
+        $body    = self::render_template($tpl->learner_body ?? '', $vars, true);
         if (!$subject || !$body) return;
 
-        if (helper::send_email($user, $subject, $body)) {
+        if (helper::send_message($user, $subject, $body)) {
             helper::record_notification((int)$rule->id, (int)$user->id, 'breach');
             $already_sent[$key] = true;
             mtrace("  AsyncWatch: breach email → learner {$user->id} rule {$rule->id}");
@@ -690,10 +655,10 @@ class check_progress extends scheduled_task {
 
         $vars    = $this->build_vars($user, $course, $rule, $done, $total, $deadline, $site_name);
         $subject = self::render_template($tpl->learner_warning_subject, $vars);
-        $body    = self::render_template($tpl->learner_warning_body ?? '', $vars);
+        $body    = self::render_template($tpl->learner_warning_body ?? '', $vars, true);
         if (!$subject || !$body) return;
 
-        if (helper::send_email($user, $subject, $body)) {
+        if (helper::send_message($user, $subject, $body)) {
             helper::record_notification((int)$rule->id, (int)$user->id, 'warning');
             $already_sent[$key] = true;
             mtrace("  AsyncWatch: warning email → learner {$user->id} rule {$rule->id}");
@@ -714,13 +679,30 @@ class check_progress extends scheduled_task {
             '{{coursename}}'     => $course->fullname,
             '{{parts_done}}'     => $done,
             '{{parts_required}}' => $rule->parts_required,
-            '{{deadline}}'       => userdate($deadline),
+            '{{deadline}}'       => helper::user_date($deadline, $user),
             '{{rulename}}'       => $rule->name,
             '{{sitename}}'       => $site_name,
         ];
     }
 
-    public static function render_template(string $template, array $vars): string {
+    /**
+     * Substitute {{placeholder}} vars into a template.
+     *
+     * @param bool $escape_html Escape each substituted value with s()
+     *             before inserting it. Used for HTML body templates,
+     *             where an unescaped value (a learner's own profile name,
+     *             a course full name — both user-editable) could break the
+     *             HTML structure or inject markup into a stored, later-
+     *             rendered notification. Left false for subjects and plain
+     *             text, where HTML-escaping would incorrectly show literal
+     *             "&amp;" etc.
+     */
+    public static function render_template(string $template, array $vars, bool $escape_html = false): string {
+        if ($escape_html) {
+            $vars = array_map(function($v) {
+                return is_scalar($v) ? s((string)$v) : $v;
+            }, $vars);
+        }
         return str_replace(array_keys($vars), array_values($vars), $template);
     }
 }

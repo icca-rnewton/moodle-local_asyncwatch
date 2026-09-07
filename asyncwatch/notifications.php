@@ -58,17 +58,36 @@ $recipients       = json_decode($tpl->staff_recipients ?? '{}', true) ?: ['useri
 $selected_userids = array_map('intval', $recipients['userids'] ?? []);
 
 // ── Build user list for autocomplete ─────────────────────────────────────────
-$all_users = $DB->get_records_sql(
-    "SELECT id, firstname, lastname, email,
-            firstnamephonetic, lastnamephonetic, middlename, alternatename
-       FROM {user}
-      WHERE deleted = 0 AND suspended = 0 AND id != :guestid
-      ORDER BY lastname ASC, firstname ASC",
-    ['guestid' => $CFG->siteguest ?? 1]
+// Scoped to this course, not the whole site — a user only needs
+// local/asyncwatch:manage in ONE course to reach this page, so a
+// site-wide user list here was leaking every user's name + email
+// regardless of any connection to this course.
+$all_users = get_enrolled_users(
+    $context, '', 0,
+    'u.id, u.firstname, u.lastname, u.email, u.firstnamephonetic, '
+    . 'u.lastnamephonetic, u.middlename, u.alternatename',
+    'u.lastname ASC, u.firstname ASC'
 );
 $user_options = [];
 foreach ($all_users as $u) {
     $user_options[$u->id] = fullname($u) . ' (' . $u->email . ')';
+}
+
+// Anyone already saved as a recipient is still shown even if no longer
+// enrolled in this course, so we don't silently drop an existing setting.
+$missing_selected = array_diff($selected_userids, array_keys($user_options));
+if (!empty($missing_selected)) {
+    list($insql, $params) = $DB->get_in_or_equal($missing_selected);
+    $extra_users = $DB->get_records_sql(
+        "SELECT id, firstname, lastname, email,
+                firstnamephonetic, lastnamephonetic, middlename, alternatename
+           FROM {user}
+          WHERE id $insql AND deleted = 0",
+        $params
+    );
+    foreach ($extra_users as $u) {
+        $user_options[$u->id] = fullname($u) . ' (' . $u->email . ')';
+    }
 }
 
 // ── Build form ────────────────────────────────────────────────────────────────
@@ -84,11 +103,13 @@ if ($form->is_cancelled()) {
 
 // ── Handle save ───────────────────────────────────────────────────────────────
 if ($data = $form->get_data()) {
-    // Extract editor text from the editor element arrays.
+    // Editor content is user-authored HTML — clean it before storing, since
+    // it gets rendered back out (with placeholder substitution) whenever a
+    // notification is actually sent.
     $tpl->learner_subject         = $data->learner_subject;
-    $tpl->learner_body            = $data->learner_body_editor['text'] ?? '';
+    $tpl->learner_body            = clean_param($data->learner_body_editor['text'] ?? '', PARAM_CLEANHTML);
     $tpl->learner_warning_subject = $data->learner_warning_subject;
-    $tpl->learner_warning_body    = $data->learner_warning_body_editor['text'] ?? '';
+    $tpl->learner_warning_body    = clean_param($data->learner_warning_body_editor['text'] ?? '', PARAM_CLEANHTML);
 
     $tpl->staff_recipients = json_encode([
         'userids' => array_values(array_unique(array_filter(

@@ -19,8 +19,11 @@
  * ({user_info_data}). That table has its own core Privacy provider which
  * already handles its export/delete — this plugin only ever writes to it,
  * never reads it back for privacy purposes, so no export/delete code is
- * needed here for it. It is still disclosed below per the Privacy API
- * convention for plugins that write into a shared subsystem table.
+ * needed here for it. This is disclosed below via add_subsystem_link()
+ * against core_user, NOT add_database_table() — add_database_table()
+ * asserts this provider IS the source of truth for exporting/deleting that
+ * table, which isn't true here and would be inconsistent with this
+ * provider's actual export/delete methods, which don't touch it.
  *
  * The site-wide cross-course staff recipient list
  * (local_asyncwatch/global_staff_recipients, plugin config) identifies
@@ -81,13 +84,12 @@ class provider implements
 
         // Disclosure only — this plugin writes here but never reads it
         // back; export/delete for this table is core Moodle's own
-        // responsibility, not this provider's.
-        $collection->add_database_table(
-            'user_info_data',
-            [
-                'userid' => 'privacy:metadata:user_info_data:userid',
-                'data'   => 'privacy:metadata:user_info_data:data',
-            ],
+        // responsibility, not this provider's. add_subsystem_link() says
+        // exactly that: "this plugin uses core_user's data", without
+        // claiming ownership of the export/delete contract for it.
+        $collection->add_subsystem_link(
+            'core_user',
+            [],
             'privacy:metadata:user_info_data'
         );
 

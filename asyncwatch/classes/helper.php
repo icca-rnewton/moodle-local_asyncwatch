@@ -26,6 +26,33 @@ class helper {
      * @param int $courseid
      * @return array of stdClass records
      */
+    /**
+     * The standard user field list used everywhere this plugin loads
+     * enrolled users — includes phonetic/alternate name fields so
+     * fullname() doesn't throw a debugging() notice on every call when
+     * debug mode is on (see project conventions).
+     */
+    private const LEARNER_FIELDS =
+        'u.id, u.firstname, u.lastname, u.email, u.lastaccess, '
+        . 'u.firstnamephonetic, u.lastnamephonetic, u.middlename, u.alternatename';
+
+    /**
+     * Learners actually being tracked for deadline compliance in a course:
+     * enrolled, active (not suspended), and excluding anyone who holds a
+     * role that can manage AsyncWatch itself in this context (teachers,
+     * managers — by default whoever has local/asyncwatch:manage here).
+     * Using that capability rather than a hardcoded role shortname list
+     * means this stays in sync automatically if the capability's default
+     * role set is ever changed.
+     *
+     * @return array [userid => stdClass{id, firstname, lastname, email, lastaccess, ...}]
+     */
+    public static function get_active_learners(\context $context): array {
+        $enrolled = get_enrolled_users($context, '', 0, self::LEARNER_FIELDS, 'u.lastname ASC, u.firstname ASC', 0, 0, true);
+        $staff    = get_users_by_capability($context, 'local/asyncwatch:manage', 'u.id');
+        return array_diff_key($enrolled, $staff);
+    }
+
     public static function get_parts(int $courseid): array {
         global $DB;
         return $DB->get_records('asyncwatch_parts', ['courseid' => $courseid], 'sortorder ASC');
@@ -966,6 +993,58 @@ class helper {
         ];
     }
 
+    /**
+     * Same result as get_effective_deadline(), but does zero DB queries —
+     * it works entirely from pre-loaded group/cohort membership and
+     * override maps, so a caller processing many users against one rule
+     * can bulk-load those maps ONCE per rule rather than paying for fresh
+     * group/cohort/override lookups on every single (user, rule) pair.
+     *
+     * Originally lived as a private method on the scheduled task; promoted
+     * here so report.php can share it too, rather than either duplicating
+     * the logic or falling back to the slow per-call version above.
+     *
+     * @param array $overrides_by_group  [groupid => override record]
+     * @param array $overrides_by_cohort [cohortid => override record]
+     */
+    public static function effective_deadline_from_cache(
+        \stdClass $rule,
+        int $userid,
+        array $groupids,
+        array $overrides_by_group,
+        array $cohortids = [],
+        array $overrides_by_cohort = []
+    ): array {
+        $best = null;
+        foreach ($groupids as $gid) {
+            if (!isset($overrides_by_group[$gid])) continue;
+            $ov = $overrides_by_group[$gid];
+            if ($best === null || (int)$ov->deadline > (int)$best->deadline) {
+                $best = $ov;
+            }
+        }
+        foreach ($cohortids as $cid) {
+            if (!isset($overrides_by_cohort[$cid])) continue;
+            $ov = $overrides_by_cohort[$cid];
+            if ($best === null || (int)$ov->deadline > (int)$best->deadline) {
+                $best = $ov;
+            }
+        }
+
+        if ($best) {
+            return [
+                'deadline'   => (int)$best->deadline,
+                'warn_hours' => (int)$best->warn_hours,
+                'override'   => $best,
+            ];
+        }
+        return [
+            'deadline'   => (int)$rule->deadline,
+            'warn_hours' => (int)$rule->warn_hours,
+            'override'   => null,
+        ];
+    }
+
     // -------------------------------------------------------------------------
     // RESTRICTIONS
     //
@@ -1034,22 +1113,38 @@ class helper {
     }
 
     /**
-     * Send an email to a user.
-     *
-     * Body may be HTML (from Atto editor) or plain text.
-     * Moodle's email_to_user accepts both — if $messagehtml is provided it
-     * sends an HTML email with a plain-text fallback auto-generated from it.
-     *
-     * @param stdClass $user
-     * @param string   $subject
-     * @param string   $body       HTML body (may contain tags from Atto).
+     * Format a timestamp for a SPECIFIC recipient's language and timezone
+     * — not the current session's. During a cron run there is no "current
+     * user" in any meaningful sense, so a plain userdate() call renders
+     * using the server's default language/timezone rather than whichever
+     * learner or staff member is actually about to read the notification.
+     * force_current_language() affects userdate()'s date-format string
+     * (pulled via get_string()); core_date::get_user_timezone() resolves
+     * that specific user's timezone setting (including 'server'/99
+     * fall-through), not $USER's.
      */
-    public static function send_email(\stdClass $user, string $subject, string $body): bool {
-        $support = \core_user::get_support_user();
+    public static function user_date(int $timestamp, \stdClass $user, string $format = ''): string {
+        $previous_lang = force_current_language($user->lang ?? '');
+        $formatted = userdate($timestamp, $format, \core_date::get_user_timezone($user));
+        force_current_language($previous_lang);
+        return $formatted;
+    }
 
-        // Build plain-text fallback with proper paragraph breaks.
-        // Replace <p> and <br> tags with newlines before stripping,
-        // so paragraph structure is preserved in plain-text clients.
+    /**
+     * Send a learner notification via Moodle's Message API instead of a
+     * raw email — this is the correct transport for individual, no-
+     * attachment notifications: it respects the recipient's own message
+     * processor preferences (email / mobile push / popup — not everyone
+     * wants these as email), shows up in Moodle's own notification
+     * centre, and honours quiet-hours/digest settings, none of which
+     * email_to_user() does.
+     *
+     * NOT used for the staff digest emails (send_email_with_attachment())
+     * — the Message API has no file-attachment mechanism, so a CSV-
+     * attached report genuinely cannot go through it. That's kept on
+     * email_to_user() deliberately, not by oversight.
+     */
+    public static function send_message(\stdClass $user, string $subject, string $body): bool {
         $plain = $body;
         $plain = preg_replace('/<\/p>\s*<p[^>]*>/i', "\n\n", $plain);
         $plain = preg_replace('/<p[^>]*>/i',  '',     $plain);
@@ -1059,7 +1154,21 @@ class helper {
         $plain = html_entity_decode($plain, ENT_QUOTES, 'UTF-8');
         $plain = preg_replace('/\n{3,}/', "\n\n", trim($plain));
 
-        return email_to_user($user, $support, $subject, $plain, $body);
+        $message = new \core\message\message();
+        $message->component         = 'local_asyncwatch';
+        $message->name               = 'progressnotification';
+        $message->userfrom           = \core_user::get_support_user();
+        $message->userto             = $user;
+        $message->subject            = $subject;
+        $message->fullmessage        = $plain;
+        $message->fullmessageformat  = FORMAT_HTML;
+        $message->fullmessagehtml    = $body;
+        $message->smallmessage       = $subject;
+        $message->notification       = 1;
+        $message->contexturl         = (new \moodle_url('/local/asyncwatch/report.php'))->out(false);
+        $message->contexturlname     = get_string('pluginname', 'local_asyncwatch');
+
+        return (bool)message_send($message);
     }
 
     /**
@@ -1092,10 +1201,13 @@ class helper {
         }
 
         // email_to_user() expects the attachment path relative to $CFG->dataroot.
-        $dataroot = rtrim($CFG->dataroot, '/');
-        $real     = realpath($attachment_path);
+        $dataroot  = rtrim($CFG->dataroot, '/');
+        $real      = realpath($attachment_path);
+        $copy_path = null;
         if ($real === false || strpos($real, $dataroot) !== 0) {
-            // Attachment isn't inside dataroot (e.g. sys temp dir) — copy it into
+            // Attachment isn't inside dataroot (e.g. sys temp dir, or a
+            // symlinked dataroot resolving differently through realpath()
+            // — not unusual on shared hosting) — copy it into
             // dataroot/temp so email_to_user() can find it.
             $temp_dir = $CFG->dataroot . '/temp/asyncwatch';
             if (!is_dir($temp_dir)) {
@@ -1107,7 +1219,17 @@ class helper {
         }
         $relative = ltrim(substr($real, strlen($dataroot)), '/');
 
-        return email_to_user($user, $support, $subject, $plain, $body, $relative, $attachname);
+        $result = email_to_user($user, $support, $subject, $plain, $body, $relative, $attachname);
+
+        // Clean up the fallback copy — the original at $attachment_path is
+        // still the caller's responsibility (see write_csv_tempfile()'s
+        // docblock), but this copy only ever exists as an internal detail
+        // of this method, so nothing else would ever delete it.
+        if ($copy_path !== null && is_file($copy_path)) {
+            @unlink($copy_path);
+        }
+
+        return $result;
     }
 
     // -------------------------------------------------------------------------
@@ -1214,16 +1336,23 @@ class helper {
 
     /**
      * CSV header row for a progress report, given the parts in play.
+     *
+     * @param bool $include_email Whether to include the Email column — see
+     *             csv_row() for why this is optional.
      */
-    public static function csv_header(array $parts): array {
+    public static function csv_header(array $parts, bool $include_email = true): array {
         $header = [
             get_string('rulename',       'local_asyncwatch'),
             get_string('learner',        'local_asyncwatch'),
-            'Email',
+        ];
+        if ($include_email) {
+            $header[] = 'Email';
+        }
+        $header = array_merge($header, [
             get_string('parts_complete', 'local_asyncwatch'),
             get_string('status',         'local_asyncwatch'),
             get_string('last_activity',  'local_asyncwatch'),
-        ];
+        ]);
         foreach ($parts as $part) {
             $header[] = format_string($part->name);
         }
@@ -1231,32 +1360,64 @@ class helper {
     }
 
     /**
+     * Guard against CSV/spreadsheet formula injection: if a cell's value
+     * starts with =, +, -, or @, prefix it with a leading apostrophe so
+     * Excel/Sheets treats it as literal text rather than evaluating it as
+     * a formula when the exported file is opened. Applied to every cell
+     * rather than cherry-picking "risky" fields — rule names, learner
+     * names, and course names in this plugin all ultimately come from
+     * user-editable input somewhere upstream.
+     */
+    private static function csv_safe_row(array $line): array {
+        return array_map(function($value) {
+            $value = (string)$value;
+            if ($value !== '' && in_array($value[0], ['=', '+', '-', '@'], true)) {
+                return "'" . $value;
+            }
+            return $value;
+        }, $line);
+    }
+
+    /**
      * CSV data row for a single progress-report row object.
      * $row must have: rule, user, done, total, status, parts, lastaccess.
+     *
+     * @param bool $include_email Whether to include the learner's email
+     *             address. Defaults true so the automated staff digest
+     *             (which isn't tied to any one interactive viewer) is
+     *             unaffected — but the on-demand, viewer-initiated export
+     *             in report.php passes this based on whether the CURRENT
+     *             viewer actually has moodle/site:viewuseridentity for
+     *             email in this context, since it was previously exporting
+     *             email addresses regardless of that permission.
      */
-    public static function csv_row(\stdClass $row, array $parts): array {
+    public static function csv_row(\stdClass $row, array $parts, bool $include_email = true): array {
         $line = [
             format_string($row->rule->name),
             fullname($row->user),
-            $row->user->email,
+        ];
+        if ($include_email) {
+            $line[] = $row->user->email;
+        }
+        $line = array_merge($line, [
             $row->done . ' of ' . $row->total,
             get_string('status_' . $row->status, 'local_asyncwatch'),
             $row->lastaccess ? userdate($row->lastaccess) : '—',
-        ];
+        ]);
         foreach ($parts as $part) {
             $line[] = ($row->parts[$part->id] ?? false) ? '1' : '0';
         }
-        return $line;
+        return self::csv_safe_row($line);
     }
 
     /**
      * Render a set of progress-report rows as CSV text.
      */
-    public static function rows_to_csv(array $rows, array $parts): string {
+    public static function rows_to_csv(array $rows, array $parts, bool $include_email = true): string {
         $stream = fopen('php://temp', 'r+');
-        fputcsv($stream, self::csv_header($parts));
+        fputcsv($stream, self::csv_header($parts, $include_email));
         foreach ($rows as $row) {
-            fputcsv($stream, self::csv_row($row, $parts));
+            fputcsv($stream, self::csv_row($row, $parts, $include_email));
         }
         rewind($stream);
         $csv = stream_get_contents($stream);
@@ -1398,6 +1559,36 @@ class helper {
     }
 
     /**
+     * Cohorts visible to the current user for a specific course — for
+     * course-scoped features (course-level rule Restrictions, group/cohort
+     * Overrides). Unlike get_all_cohorts(), this respects Moodle's own
+     * cohort visibility rules (category-level cohorts, the cohort
+     * "visible" flag) via core's cohort_get_visible_list(), rather than
+     * exposing every cohort on the entire site to anyone who happens to
+     * have local/asyncwatch:manage in a single course.
+     *
+     * get_all_cohorts() is still the right call for the two genuinely
+     * site-wide admin pages (globalrules.php, globaloverrides.php), which
+     * are gated by local/asyncwatch:manageglobal — a real site-wide
+     * capability with no course boundary to respect.
+     *
+     * @return array cohortid => stdClass{id, name}
+     */
+    public static function get_visible_cohorts_for_course(int $courseid): array {
+        global $CFG;
+        require_once($CFG->dirroot . '/cohort/lib.php');
+
+        $course = get_course($courseid);
+        $visible = cohort_get_visible_list($course, false); // [cohortid => name]
+
+        $cohorts = [];
+        foreach ($visible as $id => $name) {
+            $cohorts[(int)$id] = (object)['id' => (int)$id, 'name' => $name];
+        }
+        return $cohorts;
+    }
+
+    /**
      * Sum of Parts across a set of courses — the maximum a cross-course
      * rule's parts_required could sensibly be.
      */
@@ -1426,10 +1617,7 @@ class helper {
         $users = [];
         foreach ($courseids as $cid) {
             $context = \context_course::instance($cid);
-            $enrolled = get_enrolled_users($context, '', 0,
-                'u.id, u.firstname, u.lastname, u.email, u.lastaccess, '
-                . 'u.firstnamephonetic, u.lastnamephonetic, u.middlename, u.alternatename'
-            );
+            $enrolled = self::get_active_learners($context);
             foreach ($enrolled as $u) {
                 $users[(int)$u->id] = $u; // union — de-duplicated by userid.
             }
@@ -1566,43 +1754,55 @@ class helper {
      * CSV header for the cross-course report. No per-part columns here —
      * unlike a per-course report, a rule's Parts can come from several
      * courses at once, so a wide per-part breakdown stops being readable.
+     *
+     * @param bool $include_email See csv_header()'s docblock.
      */
-    public static function global_csv_header(): array {
-        return [
+    public static function global_csv_header(bool $include_email = true): array {
+        $header = [
             get_string('rulename',              'local_asyncwatch'),
             get_string('learner',                'local_asyncwatch'),
-            'Email',
+        ];
+        if ($include_email) {
+            $header[] = 'Email';
+        }
+        return array_merge($header, [
             get_string('globalrule_col_courses', 'local_asyncwatch'),
             get_string('parts_complete',         'local_asyncwatch'),
             get_string('status',                 'local_asyncwatch'),
             get_string('last_activity',          'local_asyncwatch'),
-        ];
+        ]);
     }
 
     /**
      * CSV data row for the cross-course report.
      * $row must have: rule, user, done, total, status, lastaccess, coursenames.
+     *
+     * @param bool $include_email See csv_row()'s docblock.
      */
-    public static function global_csv_row(\stdClass $row): array {
-        return [
+    public static function global_csv_row(\stdClass $row, bool $include_email = true): array {
+        $line = [
             format_string($row->rule->name),
             fullname($row->user),
-            $row->user->email,
+        ];
+        if ($include_email) {
+            $line[] = $row->user->email;
+        }
+        return self::csv_safe_row(array_merge($line, [
             implode(', ', $row->coursenames),
             $row->done . ' of ' . $row->total,
             get_string('status_' . $row->status, 'local_asyncwatch'),
             $row->lastaccess ? userdate($row->lastaccess) : '—',
-        ];
+        ]));
     }
 
     /**
      * Render cross-course report rows as CSV text.
      */
-    public static function global_rows_to_csv(array $rows): string {
+    public static function global_rows_to_csv(array $rows, bool $include_email = true): string {
         $stream = fopen('php://temp', 'r+');
-        fputcsv($stream, self::global_csv_header());
+        fputcsv($stream, self::global_csv_header($include_email));
         foreach ($rows as $row) {
-            fputcsv($stream, self::global_csv_row($row));
+            fputcsv($stream, self::global_csv_row($row, $include_email));
         }
         rewind($stream);
         $csv = stream_get_contents($stream);

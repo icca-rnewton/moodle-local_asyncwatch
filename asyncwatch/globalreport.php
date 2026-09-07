@@ -119,10 +119,16 @@ $rows = array_filter($all_rows, function($r) use ($filter_ruleid, $filter_userid
 });
 
 // ── CSV export ────────────────────────────────────────────────────────────────
+// Email is only included if the current viewer has permission to see
+// identity fields — see report.php for the same guard on the per-course
+// version of this export.
+$can_view_email = has_capability('moodle/site:viewuseridentity', \context_system::instance())
+    && in_array('email', array_filter(explode(',', $CFG->showuseridentity ?? '')), true);
+
 if ($download === 'csv') {
     header('Content-Type: text/csv');
     header('Content-Disposition: attachment; filename="asyncwatch_globalreport_' . date('Ymd') . '.csv"');
-    echo helper::global_rows_to_csv($rows);
+    echo helper::global_rows_to_csv($rows, $can_view_email);
     exit;
 }
 

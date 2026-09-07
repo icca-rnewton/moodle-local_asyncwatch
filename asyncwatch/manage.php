@@ -146,7 +146,7 @@ if ($tab === 'rules' && in_array($action, ['addrule', 'editrule'])) {
         $group_options[(int)$g->id] = format_string($g->name);
     }
     $cohort_options = [];
-    foreach (helper::get_all_cohorts() as $c) {
+    foreach (helper::get_visible_cohorts_for_course($courseid) as $c) {
         $cohort_options[(int)$c->id] = format_string($c->name);
     }
 

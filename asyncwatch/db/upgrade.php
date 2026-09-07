@@ -476,7 +476,16 @@ function xmldb_local_asyncwatch_upgrade($oldversion) {
         // before the index is added, or a site with an existing duplicate
         // would fail the upgrade outright.
 
-        $duplicate_groups = $DB->get_records_sql(
+        // Find every (ruleid, groupid) pair with more than one override row.
+        // Deliberately using get_recordset_sql() here, not get_records_sql()
+        // — get_records_sql() keys its returned array by the first selected
+        // column, and that column (ruleid) is NOT unique across these rows
+        // when a single rule has duplicates across several different
+        // groups. That would silently drop all but one duplicate-group per
+        // rule from this cleanup, exactly per this project's own
+        // get_records_sql convention. A recordset is a plain iterator with
+        // no such requirement.
+        $duplicate_groups = $DB->get_recordset_sql(
             "SELECT ruleid, groupid, COUNT(*) AS cnt
                FROM {asyncwatch_rule_overrides}
               GROUP BY ruleid, groupid
@@ -491,6 +500,7 @@ function xmldb_local_asyncwatch_upgrade($oldversion) {
                 $DB->delete_records('asyncwatch_rule_overrides', ['id' => $extra->id]);
             }
         }
+        $duplicate_groups->close();
 
         $table = new xmldb_table('asyncwatch_rule_overrides');
         $index = new xmldb_index('uniq_ruleid_groupid', XMLDB_INDEX_UNIQUE, ['ruleid', 'groupid']);

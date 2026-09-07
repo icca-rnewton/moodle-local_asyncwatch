@@ -35,10 +35,26 @@ require_capability('local/asyncwatch:viewreport', $context);
 $parts     = helper::get_parts($courseid);
 $now       = time();
 $all_rules = helper::get_rules($courseid);
-$students  = get_enrolled_users($context, '', 0,
-    'u.id, u.firstname, u.lastname, u.email, u.lastaccess, '
-    . 'u.firstnamephonetic, u.lastnamephonetic, u.middlename, u.alternatename'
-);
+$students  = helper::get_active_learners($context);
+
+// ── Respect Separate Groups mode ────────────────────────────────────────────
+// Without this, a teacher restricted to their own groups by Moodle's
+// groups mode could still see (and CSV-export) every learner in the
+// course through this report, bypassing the groups mode entirely.
+if (groups_get_course_groupmode($course) == SEPARATEGROUPS
+        && !has_capability('moodle/site:accessallgroups', $context)) {
+    $viewer_groupids = array_keys(groups_get_all_groups($courseid, $USER->id));
+    if (empty($viewer_groupids)) {
+        $students = [];
+    } else {
+        list($in_sql, $in_params) = $DB->get_in_or_equal($viewer_groupids);
+        $shared_userids = array_flip($DB->get_fieldset_sql(
+            "SELECT DISTINCT userid FROM {groups_members} WHERE groupid $in_sql",
+            $in_params
+        ));
+        $students = array_intersect_key($students, $shared_userids);
+    }
+}
 
 function aw_row_status(\stdClass $rule, int $done, int $now, int $eff_deadline, int $eff_warn): string {
     if ($done >= $rule->parts_required) return 'completed';
@@ -47,10 +63,10 @@ function aw_row_status(\stdClass $rule, int $done, int $now, int $eff_deadline, 
     return 'ok';
 }
 
-$user_progress = [];
-foreach ($students as $user) {
-    $user_progress[$user->id] = helper::get_user_progress($courseid, (int)$user->id);
-}
+// Bulk-loaded in one pass (3 queries total) rather than one call per
+// learner — on a 460-user course the per-user version was issuing
+// hundreds of extra queries for a single page load.
+$user_progress = helper::bulk_get_user_progress($courseid, array_map('intval', array_column($students, 'id')));
 
 // ── Pre-load rule restriction + group/cohort memberships for filtering ─────────
 // Mirrors the cron task's logic so the report only shows users against rules
@@ -67,6 +83,14 @@ $rule_to_restrict_cohortids = []; // [ruleid => [cohortid, ...]]
 $relevant_groupids  = [];
 $relevant_cohortids = [];
 
+// Per-rule override maps, keyed the same way check_progress.php keys them
+// (groupid/cohortid => override record) — built here once per rule so the
+// per-user loop below can resolve each learner's effective deadline from
+// memory instead of running fresh override queries for every (user, rule)
+// pair, which is what made this page slow on larger courses.
+$rule_to_overrides_by_group  = []; // [ruleid => [groupid => override]]
+$rule_to_overrides_by_cohort = []; // [ruleid => [cohortid => override]]
+
 foreach ($all_rules as $rule) {
     $rid = (int)$rule->id;
 
@@ -75,8 +99,16 @@ foreach ($all_rules as $rule) {
     foreach ($rule_to_restrict_groupids[$rid]  as $gid) $relevant_groupids[$gid]  = true;
     foreach ($rule_to_restrict_cohortids[$rid] as $cid) $relevant_cohortids[$cid] = true;
 
-    foreach (helper::get_rule_overrides($rid) as $ov)        $relevant_groupids[(int)$ov->groupid]   = true;
-    foreach (helper::get_rule_cohort_overrides($rid) as $ov) $relevant_cohortids[(int)$ov->cohortid] = true;
+    $rule_to_overrides_by_group[$rid]  = [];
+    foreach (helper::get_rule_overrides($rid) as $ov) {
+        $relevant_groupids[(int)$ov->groupid] = true;
+        $rule_to_overrides_by_group[$rid][(int)$ov->groupid] = $ov;
+    }
+    $rule_to_overrides_by_cohort[$rid] = [];
+    foreach (helper::get_rule_cohort_overrides($rid) as $ov) {
+        $relevant_cohortids[(int)$ov->cohortid] = true;
+        $rule_to_overrides_by_cohort[$rid][(int)$ov->cohortid] = $ov;
+    }
 }
 
 // Pre-load all user group memberships in one query.
@@ -130,7 +162,11 @@ foreach ($all_rules as $rule) {
 
         $prog   = $user_progress[$uid];
         $done   = $prog['completed'];
-        $eff    = helper::get_effective_deadline($rule, $uid, $courseid);
+        $eff    = helper::effective_deadline_from_cache(
+            $rule, $uid,
+            $ugroups, $rule_to_overrides_by_group[$rule->id]  ?? [],
+            $ucohorts, $rule_to_overrides_by_cohort[$rule->id] ?? []
+        );
         $status = aw_row_status($rule, $done, $now, $eff['deadline'], $eff['warn_hours']);
 
         $all_rows[] = (object)[
@@ -168,10 +204,16 @@ $rows = array_filter($all_rows, function($r) use (
 // ── CSV export ────────────────────────────────────────────────────────────────
 // Shared with the automated staff digest emails sent from check_progress — see
 // helper::csv_header() / helper::csv_row() / helper::rows_to_csv().
+// Email is only included if the CURRENT viewer actually has permission to
+// see identity fields in this context — this export was previously
+// including learner email addresses regardless of that permission.
+$can_view_email = has_capability('moodle/site:viewuseridentity', $context)
+    && in_array('email', array_filter(explode(',', $CFG->showuseridentity ?? '')), true);
+
 if ($download === 'csv') {
     header('Content-Type: text/csv');
     header('Content-Disposition: attachment; filename="asyncwatch_report_' . $courseid . '_' . date('Ymd') . '.csv"');
-    echo helper::rows_to_csv($rows, $parts);
+    echo helper::rows_to_csv($rows, $parts, $can_view_email);
     exit;
 }
 
@@ -572,6 +614,16 @@ if (empty($rows)) {
         });
     }
 
+    // $table->pagesize() above only sets the pager's total-row count and
+    // per-page size for rendering the pagination bar — it does not slice
+    // the data. Since this table doesn't use query_db(), that's on us: the
+    // pager showed 25 rows at a time while every filtered row was still
+    // being built and echoed out below on every request. Slice to the
+    // requested page here, after sorting the full set, before rendering.
+    $aw_page    = optional_param('page', 0, PARAM_INT);
+    $aw_perpage = 25;
+    $rows_page  = array_slice($rows, $aw_page * $aw_perpage, $aw_perpage);
+
     // Helpers.
     $fmt_warn = function(?int $wm): string {
         if ($wm === null || $wm <= 0) return '—';
@@ -590,7 +642,7 @@ if (empty($rows)) {
 
     $datefmt = get_string('aw_datetimefmt', 'local_asyncwatch');
 
-    foreach ($rows as $row) {
+    foreach ($rows_page as $row) {
         $sc    = $status_cfg[$row->status];
         $badge = html_writer::tag('span',
             get_string('status_' . $row->status, 'local_asyncwatch'),

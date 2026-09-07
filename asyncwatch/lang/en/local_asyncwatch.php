@@ -11,6 +11,7 @@ defined('MOODLE_INTERNAL') || die();
 
 // General
 $string['pluginname']           = 'Async Progress Monitor';
+$string['messageprovider:progressnotification'] = 'Deadline warning and breach notifications';
 $string['pluginname_desc']      = 'Monitor asynchronous learner progress by grouping activities into Parts and setting completion rules.';
 
 // Navigation / page titles
@@ -483,6 +484,4 @@ $string['privacy:metadata:asyncwatch_global_notifications:ruleid']   = 'The cros
 $string['privacy:metadata:asyncwatch_global_notifications:userid']   = 'The learner this notification was sent about.';
 $string['privacy:metadata:asyncwatch_global_notifications:type']     = 'The type of notification (e.g. learner warning, staff breach digest).';
 $string['privacy:metadata:asyncwatch_global_notifications:timesent'] = 'The time the notification was sent.';
-$string['privacy:metadata:user_info_data']         = 'AsyncWatch can write a learner\'s computed status (On track / At risk / Behind / Completed) into a Moodle user profile custom field you choose. This is a core Moodle table with its own privacy provider — AsyncWatch only ever writes to it.';
-$string['privacy:metadata:user_info_data:userid']  = 'The learner whose profile field is being updated.';
-$string['privacy:metadata:user_info_data:data']    = 'The status label written into the chosen profile field.';
+$string['privacy:metadata:user_info_data']         = 'AsyncWatch can write a learner\'s computed status (On track / At risk / Behind / Completed) into a Moodle user profile custom field you choose. This uses core Moodle\'s own user subsystem, which has its own privacy provider — AsyncWatch only ever writes to it.';

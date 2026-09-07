@@ -69,7 +69,7 @@ foreach ($all_groups as $g) {
     $group_options[$g->id] = format_string($g->name);
 }
 
-$all_cohorts_raw = helper::get_all_cohorts();
+$all_cohorts_raw = helper::get_visible_cohorts_for_course($courseid);
 $cohort_options  = [];
 foreach ($all_cohorts_raw as $ch) {
     $cohort_options[(int)$ch->id] = format_string($ch->name);
