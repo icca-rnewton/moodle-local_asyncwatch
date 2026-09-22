@@ -46,8 +46,12 @@ foreach ($all_rules as $rule) {
 
     $coursenames = [];
     foreach ($courseids as $cid) {
-        $c = get_course($cid);
-        $coursenames[] = format_string($c->fullname);
+        // A deleted course shouldn't fatal the whole report page — see
+        // helper::get_global_rule_users() for the same reasoning.
+        $c = $DB->get_record('course', ['id' => $cid], 'fullname');
+        if ($c) {
+            $coursenames[] = format_string($c->fullname);
+        }
     }
 
     $userids  = array_keys($users);

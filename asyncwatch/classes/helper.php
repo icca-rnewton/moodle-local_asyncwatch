@@ -33,7 +33,7 @@ class helper {
      * debug mode is on (see project conventions).
      */
     private const LEARNER_FIELDS =
-        'u.id, u.firstname, u.lastname, u.email, u.lastaccess, '
+        'u.id, u.firstname, u.lastname, u.email, u.lastaccess, u.lang, u.timezone, '
         . 'u.firstnamephonetic, u.lastnamephonetic, u.middlename, u.alternatename';
 
     /**
@@ -1090,13 +1090,28 @@ class helper {
     /**
      * Has a notification of this type already been sent for this rule + user?
      */
-    public static function notification_already_sent(int $ruleid, int $userid, string $type): bool {
+    /**
+     * Has a notification of this type already been sent for this rule + user?
+     *
+     * @param int|null $within_seconds When null (the default — used for
+     *        individual learner notifications), dedup is permanent: a
+     *        learner should only ever get one breach/warning email per
+     *        rule. When given, only counts as "already sent" if it
+     *        happened within that many seconds of now — used for the
+     *        staff digest, which is meant to go out once per CRON RUN
+     *        (see send_staff_digest()'s docblock), not once ever. Without
+     *        this, the very first successful digest permanently silences
+     *        every later run — this is what actually happened before.
+     */
+    public static function notification_already_sent(int $ruleid, int $userid, string $type, ?int $within_seconds = null): bool {
         global $DB;
-        return $DB->record_exists('asyncwatch_notifications', [
-            'ruleid' => $ruleid,
-            'userid' => $userid,
-            'type'   => $type,
-        ]);
+        $params = ['ruleid' => $ruleid, 'userid' => $userid, 'type' => $type];
+        $select = "ruleid = :ruleid AND userid = :userid AND type = :type";
+        if ($within_seconds !== null) {
+            $select .= " AND timesent >= :since";
+            $params['since'] = time() - $within_seconds;
+        }
+        return $DB->record_exists_select('asyncwatch_notifications', $select, $params);
     }
 
     /**
@@ -1262,22 +1277,67 @@ class helper {
     /**
      * Text/menu-type user profile custom fields, suitable for status sync.
      *
+     * @param bool $restrict_to_course_safe When true (course-level rules,
+     *        manage.php), only offers locked=0 fields that are also on the
+     *        site-wide allowlist (Site administration → AsyncWatch) — see
+     *        that setting's own description for why this restriction
+     *        exists. When false (cross-course rules, globalrules.php —
+     *        already gated by the site-wide manageglobal capability),
+     *        every unlocked-or-locked text/menu field is offered, same as
+     *        before.
+     * @param string|null $currently_selected A rule's already-configured
+     *        field shortname, if any — kept in the list even if it would
+     *        otherwise be excluded, so editing an existing rule doesn't
+     *        silently clear a working configuration out from under it.
      * @return array shortname => "Field name (shortname)"
      */
-    public static function get_profile_field_options(): array {
+    public static function get_profile_field_options(
+        bool $restrict_to_course_safe = false, ?string $currently_selected = null
+    ): array {
         global $DB;
+        $where = "datatype IN ('text', 'menu')";
+        if ($restrict_to_course_safe) {
+            $where .= " AND locked = 0";
+        }
         $fields = $DB->get_records_select(
             'user_info_field',
-            "datatype IN ('text', 'menu')",
+            $where,
             null,
             'categoryid ASC, sortorder ASC',
             'id, shortname, name'
         );
+
+        $allowlist = $restrict_to_course_safe ? self::get_course_profile_field_allowlist() : null;
+
         $options = [];
         foreach ($fields as $f) {
+            if ($allowlist !== null && !in_array($f->shortname, $allowlist, true)) {
+                continue;
+            }
             $options[$f->shortname] = format_string($f->name) . ' (' . $f->shortname . ')';
         }
+
+        if ($currently_selected && !isset($options[$currently_selected])) {
+            $existing = $DB->get_record('user_info_field', ['shortname' => $currently_selected], 'name');
+            if ($existing) {
+                $options[$currently_selected] = format_string($existing->name) . ' (' . $currently_selected . ')';
+            }
+        }
+
         return $options;
+    }
+
+    /**
+     * Shortnames of profile fields a site admin has explicitly allowed
+     * course-level rules to write to. Empty by default — nothing is
+     * allowed until an admin opts fields in.
+     */
+    public static function get_course_profile_field_allowlist(): array {
+        $raw = get_config('local_asyncwatch', 'course_profile_field_allowlist');
+        if (empty($raw)) return [];
+        // admin_setting_configmulticheckbox stores checked keys as a
+        // comma-separated string.
+        return array_values(array_filter(array_map('trim', explode(',', $raw))));
     }
 
     /**
@@ -1288,6 +1348,45 @@ class helper {
         if ($shortname === '') return null;
         $field = $DB->get_record('user_info_field', ['shortname' => $shortname], 'id');
         return $field ? (int)$field->id : null;
+    }
+
+    /**
+     * Datatype + configured menu options for a profile field, so a caller
+     * can check a value actually belongs to that field's own option set
+     * before writing to it.
+     */
+    public static function get_profile_field_meta(int $fieldid): ?\stdClass {
+        global $DB;
+        return $DB->get_record('user_info_field', ['id' => $fieldid], 'id, datatype, param1') ?: null;
+    }
+
+    /**
+     * Every status label this plugin could ever write via profile field
+     * sync — used to validate a menu-type field actually has all four
+     * options configured before syncing to it at all (see
+     * get_profile_field_meta()'s caller in check_progress.php).
+     */
+    public static function all_status_labels(): array {
+        return [
+            get_string('status_ok',        'local_asyncwatch'),
+            get_string('status_warning',   'local_asyncwatch'),
+            get_string('status_breach',    'local_asyncwatch'),
+            get_string('status_completed', 'local_asyncwatch'),
+        ];
+    }
+
+    /**
+     * True if a profile field can safely receive every status label this
+     * plugin might write to it — always true for text fields, and true
+     * for a menu field only if ALL FOUR status labels are among its own
+     * configured options. A menu field missing even one status option
+     * should never be synced to at all, rather than silently accepting
+     * some statuses and not others.
+     */
+    public static function profile_field_menu_compatible(\stdClass $meta): bool {
+        if ($meta->datatype !== 'menu') return true;
+        $menu_options = array_map('trim', explode("\n", $meta->param1 ?? ''));
+        return empty(array_diff(self::all_status_labels(), $menu_options));
     }
 
     /**
@@ -1616,7 +1715,13 @@ class helper {
 
         $users = [];
         foreach ($courseids as $cid) {
-            $context = \context_course::instance($cid);
+            // Ignore courses that no longer exist — a global rule can span
+            // several courses, and one deleted course shouldn't stop the
+            // rest of the rule's courses from being monitored. Without
+            // IGNORE_MISSING this throws and, since that propagates past
+            // this loop, would otherwise abort the whole rule.
+            $context = \context_course::instance($cid, IGNORE_MISSING);
+            if (!$context) continue;
             $enrolled = self::get_active_learners($context);
             foreach ($enrolled as $u) {
                 $users[(int)$u->id] = $u; // union — de-duplicated by userid.
@@ -1815,13 +1920,19 @@ class helper {
      * rule? Mirrors notification_already_sent() but against the separate
      * asyncwatch_global_notifications table.
      */
-    public static function global_notification_already_sent(int $ruleid, int $userid, string $type): bool {
+    /**
+     * Cross-course counterpart to notification_already_sent() — same
+     * $within_seconds behaviour, same reasoning.
+     */
+    public static function global_notification_already_sent(int $ruleid, int $userid, string $type, ?int $within_seconds = null): bool {
         global $DB;
-        return $DB->record_exists('asyncwatch_global_notifications', [
-            'ruleid' => $ruleid,
-            'userid' => $userid,
-            'type'   => $type,
-        ]);
+        $params = ['ruleid' => $ruleid, 'userid' => $userid, 'type' => $type];
+        $select = "ruleid = :ruleid AND userid = :userid AND type = :type";
+        if ($within_seconds !== null) {
+            $select .= " AND timesent >= :since";
+            $params['since'] = time() - $within_seconds;
+        }
+        return $DB->record_exists_select('asyncwatch_global_notifications', $select, $params);
     }
 
     /**

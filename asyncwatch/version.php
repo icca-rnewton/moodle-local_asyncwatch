@@ -1,8 +1,8 @@
 <?php
 defined('MOODLE_INTERNAL') || die();
 $plugin->component = 'local_asyncwatch';
-$plugin->version   = 2026072603;
-$plugin->requires  = 2022112800;
+$plugin->version   = 2026072607;
+$plugin->requires  = 2023042400;
 $plugin->maturity  = MATURITY_BETA;
-$plugin->release   = '1.14.3';
-$plugin->supported = [401, 405];
+$plugin->release   = '1.14.7';
+$plugin->supported = [402, 405];

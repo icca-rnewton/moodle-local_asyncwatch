@@ -89,6 +89,12 @@ if (in_array($action, ['addoverride', 'editoverride'])) {
     }
 
     if ($data = $form->get_data()) {
+        if (!empty($data->overrideid)) {
+            $existing = $DB->get_record('asyncwatch_global_rule_overrides', ['id' => (int)$data->overrideid], 'ruleid', MUST_EXIST);
+            if ((int)$existing->ruleid !== $ruleid) {
+                throw new \moodle_exception('invalidrecord', 'error');
+            }
+        }
         $record = (object)[
             'ruleid'     => $ruleid,
             'cohortid'   => (int)$data->cohortid,

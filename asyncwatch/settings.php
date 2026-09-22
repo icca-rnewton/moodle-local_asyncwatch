@@ -22,6 +22,33 @@ if ($hassiteconfig) {
 
     $settingspage = new admin_settingpage('local_asyncwatch', get_string('pluginname', 'local_asyncwatch'));
 
+    // ── Course-level profile field write allowlist ───────────────────────────
+    // local/asyncwatch:manage is a PER-COURSE capability, but custom profile
+    // fields are a SITE-WIDE resource — without this, any course's editing
+    // teacher could point a rule at any unlocked text/menu profile field on
+    // the site. This lets a site admin explicitly opt fields in; empty
+    // (the default) means no course-level rule can write to any field until
+    // one is added here. Cross-course rules are unaffected — they already
+    // require local/asyncwatch:manageglobal, a genuinely site-wide
+    // capability with no default role.
+    //
+    // Fields are grouped by their profile field category (Site admin >
+    // Users > User profile fields), and locked fields are shown greyed out
+    // and un-tickable rather than left off the list entirely — so a field
+    // that's currently locked still confirms it was found, without letting
+    // it actually be selected until it's unlocked at the higher level
+    // that's meant to control it.
+    $settingspage->add(new admin_setting_heading(
+        'local_asyncwatch/profilefieldheading',
+        get_string('profilefieldheading', 'local_asyncwatch'),
+        get_string('profilefieldheading_desc', 'local_asyncwatch')
+    ));
+    $settingspage->add(new \local_asyncwatch\admin_setting_profilefields(
+        'local_asyncwatch/course_profile_field_allowlist',
+        get_string('profilefield_allowlist', 'local_asyncwatch'),
+        get_string('profilefield_allowlist_desc', 'local_asyncwatch')
+    ));
+
     // ── Per-course rule staff report emails ─────────────────────────────────
     $settingspage->add(new admin_setting_heading(
         'local_asyncwatch/staffreportheading',

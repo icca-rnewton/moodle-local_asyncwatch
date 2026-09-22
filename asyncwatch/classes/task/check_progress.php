@@ -19,6 +19,17 @@ use core\task\scheduled_task;
 
 class check_progress extends scheduled_task {
 
+    /**
+     * Staff digests are meant to go out once per rule per cron RUN, not
+     * once ever (see send_staff_digest()'s docblock) — this window is how
+     * "already sent this run" is defined. Comfortably below the plugin's
+     * own 15/45-minutes-past-the-hour schedule, so a legitimately new run
+     * always sees already_sent() as false, while still guarding against a
+     * genuine double-execution (e.g. a manual "Run now" landing close to
+     * the scheduled run).
+     */
+    private const STAFF_DIGEST_DEDUP_WINDOW = 600; // 10 minutes.
+
     public function get_name(): string {
         return get_string('pluginname', 'local_asyncwatch') . ': Check Progress';
     }
@@ -72,7 +83,7 @@ class check_progress extends scheduled_task {
         list($in_sql, $params) = $DB->get_in_or_equal($user_ids);
         $params[] = $courseid;
         $membership_rows = $DB->get_records_sql(
-            "SELECT gm.userid, gm.groupid
+            "SELECT gm.id, gm.userid, gm.groupid
                FROM {groups_members} gm
                JOIN {groups} g ON g.id = gm.groupid
               WHERE gm.userid $in_sql AND g.courseid = ?",
@@ -163,10 +174,16 @@ class check_progress extends scheduled_task {
         $profile_data    = [];
         if (!empty($rule->profilefield)) {
             $profile_fieldid = helper::get_profile_field_id($rule->profilefield);
-            if ($profile_fieldid) {
-                $profile_data = helper::bulk_get_profile_field_data($profile_fieldid, array_keys($students));
-            } else {
+            if (!$profile_fieldid) {
                 mtrace("  AsyncWatch: rule {$rule->id} targets profile field '{$rule->profilefield}' which no longer exists — skipping sync.");
+            } else {
+                $field_meta = helper::get_profile_field_meta($profile_fieldid);
+                if (!$field_meta || !helper::profile_field_menu_compatible($field_meta)) {
+                    mtrace("  AsyncWatch: rule {$rule->id}'s profile field '{$rule->profilefield}' is a dropdown that doesn't have all four status options configured — skipping sync rather than writing a value outside its own option list.");
+                    $profile_fieldid = null;
+                } else {
+                    $profile_data = helper::bulk_get_profile_field_data($profile_fieldid, array_keys($students));
+                }
             }
         }
 
@@ -178,9 +195,9 @@ class check_progress extends scheduled_task {
         $want_breach_digest  = (bool)$rule->notify_staff_breach;
         $want_warning_digest = (bool)$rule->notify_staff_warning;
         $breach_digest_sent  = $want_breach_digest
-            && helper::notification_already_sent((int)$rule->id, 0, 'breach_staff');
+            && helper::notification_already_sent((int)$rule->id, 0, 'breach_staff', self::STAFF_DIGEST_DEDUP_WINDOW);
         $warning_digest_sent = $want_warning_digest
-            && helper::notification_already_sent((int)$rule->id, 0, 'warning_staff');
+            && helper::notification_already_sent((int)$rule->id, 0, 'warning_staff', self::STAFF_DIGEST_DEDUP_WINDOW);
 
         $breach_rows  = [];
         $warning_rows = [];
@@ -291,10 +308,16 @@ class check_progress extends scheduled_task {
         $user_ids   = array_unique(array_map('intval', $recipients['userids'] ?? []));
         if (empty($user_ids)) return;
 
+        // Content is generated once and sent to every recipient, so there's
+        // no single "the" recipient locale to use — falling back to the
+        // first configured recipient as a reference point is still more
+        // correct than the server's default language/timezone, and keeps
+        // this on the same helper as the learner-facing notifications.
+        $reference_user = \core_user::get_user($user_ids[0]);
         $vars = [
             '{{coursename}}'     => $course->fullname,
             '{{rulename}}'       => $rule->name,
-            '{{deadline}}'       => userdate($rule->deadline),
+            '{{deadline}}'       => $reference_user ? helper::user_date($rule->deadline, $reference_user) : userdate($rule->deadline),
             '{{sitename}}'       => $site_name,
             '{{affected_count}}' => count($rows),
         ];
@@ -381,26 +404,38 @@ class check_progress extends scheduled_task {
 
         $coursenames = [];
         foreach ($courseids as $cid) {
-            $coursenames[] = format_string(get_course($cid)->fullname);
+            // Same reasoning as get_global_rule_users() — a deleted course
+            // shouldn't take the whole rule down. get_course() has no
+            // ignore-missing option, so fetch just what's needed directly.
+            $crec = $DB->get_record('course', ['id' => $cid], 'fullname');
+            if ($crec) {
+                $coursenames[] = format_string($crec->fullname);
+            }
         }
         $courses_str = implode(', ', $coursenames);
 
         $want_breach_digest  = (bool)$rule->notify_staff_breach;
         $want_warning_digest = (bool)$rule->notify_staff_warning;
         $breach_digest_sent  = $want_breach_digest
-            && helper::global_notification_already_sent($ruleid, 0, 'breach_staff');
+            && helper::global_notification_already_sent($ruleid, 0, 'breach_staff', self::STAFF_DIGEST_DEDUP_WINDOW);
         $warning_digest_sent = $want_warning_digest
-            && helper::global_notification_already_sent($ruleid, 0, 'warning_staff');
+            && helper::global_notification_already_sent($ruleid, 0, 'warning_staff', self::STAFF_DIGEST_DEDUP_WINDOW);
 
         // ── Bulk load: profile field sync state, if this rule targets one ─────
         $profile_fieldid = null;
         $profile_data    = [];
         if (!empty($rule->profilefield)) {
             $profile_fieldid = helper::get_profile_field_id($rule->profilefield);
-            if ($profile_fieldid) {
-                $profile_data = helper::bulk_get_profile_field_data($profile_fieldid, $userids);
-            } else {
+            if (!$profile_fieldid) {
                 mtrace("  AsyncWatch: global rule {$ruleid} targets profile field '{$rule->profilefield}' which no longer exists — skipping sync.");
+            } else {
+                $field_meta = helper::get_profile_field_meta($profile_fieldid);
+                if (!$field_meta || !helper::profile_field_menu_compatible($field_meta)) {
+                    mtrace("  AsyncWatch: global rule {$ruleid}'s profile field '{$rule->profilefield}' is a dropdown that doesn't have all four status options configured — skipping sync rather than writing a value outside its own option list.");
+                    $profile_fieldid = null;
+                } else {
+                    $profile_data = helper::bulk_get_profile_field_data($profile_fieldid, $userids);
+                }
             }
         }
 
@@ -569,10 +604,13 @@ class check_progress extends scheduled_task {
         if (!$subject_tpl) $subject_tpl = get_string($default_subject_key, 'local_asyncwatch');
         if (!$body_tpl)    $body_tpl    = get_string($default_body_key,    'local_asyncwatch');
 
+        // See send_staff_digest()'s comment — same reasoning, same reference-
+        // recipient fallback.
+        $reference_user = \core_user::get_user($recipient_ids[0]);
         $vars = [
             '{{courses}}'         => $courses_str,
             '{{rulename}}'        => $rule->name,
-            '{{deadline}}'        => userdate($rule->deadline),
+            '{{deadline}}'        => $reference_user ? helper::user_date($rule->deadline, $reference_user) : userdate($rule->deadline),
             '{{sitename}}'        => $site_name,
             '{{affected_count}}'  => count($rows),
         ];

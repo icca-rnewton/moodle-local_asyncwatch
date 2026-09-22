@@ -102,6 +102,9 @@ if (in_array($action, ['add', 'edit'])) {
         'courses_with_parts'    => $courses_with_parts,
         'cohorts'               => $cohort_options,
         'profile_field_options' => helper::get_profile_field_options(),
+        // Deliberately unrestricted — local/asyncwatch:manageglobal is
+        // already a genuine site-wide capability, so there's no course/
+        // site privilege gap for the allowlist above to close here.
     ]);
 
     if ($form->is_cancelled()) {

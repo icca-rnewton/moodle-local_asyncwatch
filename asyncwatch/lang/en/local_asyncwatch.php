@@ -342,6 +342,13 @@ $string['profilefield_desc']           = 'Optionally write this rule\'s status (
 $string['profilefield']                = 'Update profile field';
 $string['profilefield_help']           = 'Only text and dropdown-type custom profile fields are listed. The field must already exist — create it under Site administration → Users → User profile fields. The value is updated during the scheduled task run, and only written when the status has actually changed.';
 $string['profilefield_none']           = '— Don\'t update a profile field —';
+$string['profilefieldheading']         = 'Course rule profile field write access';
+$string['profilefieldheading_desc']    = 'Course-level rules can optionally update a learner\'s custom profile field with their status. Since local/asyncwatch:manage is a per-course capability but profile fields are site-wide, an editing teacher in any one course could otherwise target any unlocked field on the site. Tick which fields course-level rules are allowed to write to — none are allowed until at least one is ticked here. This does not affect Cross-course Rules, which already require the site-wide "manage global rules" capability.';
+$string['profilefield_none_eligible']  = 'No text or dropdown custom profile fields exist yet. Create one under Site administration → Users → User profile fields, then return here.';
+$string['profilefield_locked_tag']     = 'locked';
+$string['profilefield_uncategorised']  = 'Uncategorised';
+$string['profilefield_allowlist']      = 'Fields course rules may write to';
+$string['profilefield_allowlist_desc'] = 'Fields are grouped by their profile field category. Locked fields are shown greyed out and cannot be ticked — locked fields are meant to be controlled above course level, so unlock a field first if you want a course rule to be able to write to it.';
 
 // Group overrides
 $string['overrides_title']          = 'Group Deadline Overrides';
@@ -356,6 +363,7 @@ $string['nooverrides_cohort']       = 'No cohort overrides defined. The default 
 $string['overridesaved']            = 'Override saved successfully.';
 $string['overridedeleted']          = 'Override deleted.';
 $string['overridedeleteconfirm']    = 'Delete this group override? The group will revert to the default deadline.';
+$string['override_duplicate']       = 'This group/cohort already has an override for this rule. Edit the existing override instead of creating a new one.';
 $string['overridedeleteconfirm_cohort'] = 'Delete this cohort override? The cohort will revert to the default deadline.';
 $string['override_default_deadline']= 'Default deadline';
 $string['override_default_desc']    = 'Groups without an override use this deadline and warning.';

@@ -112,6 +112,12 @@ if ($tab === 'parts' && in_array($action, ['addpart', 'editpart'])) {
     }
 
     if ($formdata = $part_form->get_data()) {
+        if ($id) {
+            $existing = helper::get_part($id);
+            if ((int)$existing->courseid !== $courseid) {
+                throw new \moodle_exception('invalidrecord', 'error');
+            }
+        }
         $record = (object)[
             'courseid'  => $courseid,
             'name'      => $formdata->name,
@@ -150,11 +156,16 @@ if ($tab === 'rules' && in_array($action, ['addrule', 'editrule'])) {
         $cohort_options[(int)$c->id] = format_string($c->name);
     }
 
+    $current_profilefield = null;
+    if ($action === 'editrule' && $id) {
+        $current_profilefield = $DB->get_field('asyncwatch_rules', 'profilefield', ['id' => $id]) ?: null;
+    }
+
     $rule_form = new rule_form($formurl->out(false), [
         'courseid'              => $courseid,
         'ruleid'                => $id,
         'total_parts'           => $total_parts,
-        'profile_field_options' => helper::get_profile_field_options(),
+        'profile_field_options' => helper::get_profile_field_options(true, $current_profilefield),
         'group_options'         => $group_options,
         'cohort_options'        => $cohort_options,
     ]);
@@ -164,6 +175,17 @@ if ($tab === 'rules' && in_array($action, ['addrule', 'editrule'])) {
     }
 
     if ($formdata = $rule_form->get_data()) {
+        if ($id) {
+            // Confirm the record being updated actually belongs to this
+            // course before we let the submitted data overwrite it — the
+            // check on the edit-populate path below only protects against
+            // loading another course's data into the form, not against a
+            // submitted ID that never went through that path at all.
+            $existing = $DB->get_record('asyncwatch_rules', ['id' => $id], 'courseid', MUST_EXIST);
+            if ((int)$existing->courseid !== $courseid) {
+                throw new \moodle_exception('invalidrecord', 'error');
+            }
+        }
         $record = (object)[
             'courseid'              => $courseid,
             'name'                  => $formdata->name,

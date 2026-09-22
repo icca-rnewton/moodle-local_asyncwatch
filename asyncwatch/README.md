@@ -13,7 +13,7 @@ A Moodle local plugin that monitors asynchronous learner progress by:
 
 | Item | Version |
 |------|---------|
-| Moodle | 4.1+ (build 2022112800+) |
+| Moodle | 4.2+ (build 2023042400+) |
 | PHP | 8.0+ |
 | Activity completion | Must be enabled site-wide (`$CFG->enablecompletion`) |
 

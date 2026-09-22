@@ -84,10 +84,25 @@ class override_form extends \moodleform {
     }
 
     public function validation($data, $files): array {
+        global $DB;
         $errors = parent::validation($data, $files);
         if (!empty($data['warn_enabled']) && (int)($data['warn_value'] ?? 0) < 1) {
             $errors['warn_value'] = get_string('warn_value_required', 'local_asyncwatch');
         }
+
+        // The DB's unique (ruleid, groupid) constraint already prevents a
+        // duplicate override outright — this catches it earlier, as a
+        // normal form error, instead of a raw database exception.
+        $ruleid     = (int)($data['ruleid']     ?? 0);
+        $groupid    = (int)($data['groupid']    ?? 0);
+        $overrideid = (int)($data['overrideid'] ?? 0);
+        if ($ruleid && $groupid) {
+            $existing = $DB->get_record('asyncwatch_rule_overrides', ['ruleid' => $ruleid, 'groupid' => $groupid], 'id');
+            if ($existing && (int)$existing->id !== $overrideid) {
+                $errors['groupid'] = get_string('override_duplicate', 'local_asyncwatch');
+            }
+        }
+
         return $errors;
     }
 

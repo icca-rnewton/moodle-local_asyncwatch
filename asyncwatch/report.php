@@ -118,7 +118,7 @@ if (!empty($all_user_ids)) {
     list($in_sql, $in_params) = $DB->get_in_or_equal($all_user_ids);
     $in_params[] = $courseid;
     $gm_rows = $DB->get_records_sql(
-        "SELECT gm.userid, gm.groupid
+        "SELECT gm.id, gm.userid, gm.groupid
            FROM {groups_members} gm
            JOIN {groups} g ON g.id = gm.groupid
           WHERE gm.userid $in_sql AND g.courseid = ?",

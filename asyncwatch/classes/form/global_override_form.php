@@ -84,10 +84,29 @@ class global_override_form extends \moodleform {
     }
 
     public function validation($data, $files): array {
+        global $DB;
         $errors = parent::validation($data, $files);
         if (!empty($data['warn_enabled']) && (int)($data['warn_value'] ?? 0) < 1) {
             $errors['warn_value'] = get_string('warn_value_required', 'local_asyncwatch');
         }
+
+        // This form is shared between two different tables — cross-course
+        // rule cohort overrides (globaloverrides.php) and per-course
+        // cohort overrides (overrides.php) — so the caller has to say
+        // which one it's validating against. Defaults to the cross-course
+        // table since that was this form's original, primary use.
+        $table = $this->_customdata['table'] ?? 'asyncwatch_global_rule_overrides';
+
+        $ruleid     = (int)($data['ruleid']     ?? 0);
+        $cohortid   = (int)($data['cohortid']   ?? 0);
+        $overrideid = (int)($data['overrideid'] ?? 0);
+        if ($ruleid && $cohortid) {
+            $existing = $DB->get_record($table, ['ruleid' => $ruleid, 'cohortid' => $cohortid], 'id');
+            if ($existing && (int)$existing->id !== $overrideid) {
+                $errors['cohortid'] = get_string('override_duplicate', 'local_asyncwatch');
+            }
+        }
+
         return $errors;
     }
 }
