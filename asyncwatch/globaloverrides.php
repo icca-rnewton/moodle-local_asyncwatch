@@ -82,6 +82,7 @@ if (in_array($action, ['addoverride', 'editoverride'])) {
     $form = new global_override_form($formurl->out(false), [
         'cohorts' => $cohort_options,
         'ruleid'  => $ruleid,
+        'table'   => 'asyncwatch_global_rule_overrides',
     ]);
 
     if ($form->is_cancelled()) {

@@ -140,6 +140,7 @@ if (in_array($action, ['addcohortoverride', 'editcohortoverride'])) {
         'cohorts'      => $cohort_options,
         'ruleid'       => $ruleid,
         'cohort_label' => get_string('filter_cohort', 'local_asyncwatch'),
+        'table'        => 'asyncwatch_rule_cohort_overrides',
     ]);
 
     if ($cohort_form->is_cancelled()) {
