@@ -344,6 +344,22 @@ $string['profilefield_help']           = 'Only text and dropdown-type custom pro
 $string['profilefield_none']           = '— Don\'t update a profile field —';
 $string['profilefieldheading']         = 'Course rule profile field write access';
 $string['profilefieldheading_desc']    = 'Course-level rules can optionally update a learner\'s custom profile field with their status. Since local/asyncwatch:manage is a per-course capability but profile fields are site-wide, an editing teacher in any one course could otherwise target any unlocked field on the site. Tick which fields course-level rules are allowed to write to — none are allowed until at least one is ticked here. This does not affect Cross-course Rules, which already require the site-wide "manage global rules" capability.';
+
+// Staff digest schedule
+$string['staffdigestscheduleheading']      = 'Staff Digest Schedule';
+$string['staffdigestscheduleheading_desc'] = 'How often the staff report email goes out for a rule, for as long as there are learners it needs to report on. One schedule applies to every rule\'s staff digest, course-level and cross-course alike. This is entirely separate from learner notifications, which are sent once per learner per threshold crossing and are not affected by this schedule.';
+$string['staffdigest_frequency']       = 'Frequency';
+$string['staffdigest_frequency_desc']  = 'How often a staff digest can go out for the same rule.';
+$string['staffdigest_freq_daily']      = 'Daily';
+$string['staffdigest_freq_weekly']     = 'Weekly';
+$string['staffdigest_freq_monthly']    = 'Monthly';
+$string['staffdigest_hour']            = 'Time of day';
+$string['staffdigest_hour_desc']       = 'The hour a digest becomes due, in the site\'s server time. Since this plugin checks on a schedule rather than instantly, the email may go out up to 45 minutes after this time — whenever the next scheduled task run happens to land.';
+$string['staffdigest_dayofweek']       = 'Day of week';
+$string['staffdigest_dayofweek_desc']  = 'Only used when Frequency is set to Weekly.';
+$string['staffdigest_dayofmonth']      = 'Day of month';
+$string['staffdigest_dayofmonth_desc'] = 'Only used when Frequency is set to Monthly. "Last day" always means the actual final calendar day of that month, whatever its length — safer than picking 29, 30 or 31 directly, which would otherwise roll over into the next month in shorter months.';
+$string['staffdigest_lastday']         = 'Last day of the month';
 $string['profilefield_none_eligible']  = 'No text or dropdown custom profile fields exist yet. Create one under Site administration → Users → User profile fields, then return here.';
 $string['profilefield_locked_tag']     = 'locked';
 $string['profilefield_uncategorised']  = 'Uncategorised';

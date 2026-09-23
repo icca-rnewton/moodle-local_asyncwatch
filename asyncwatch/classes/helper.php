@@ -1103,6 +1103,97 @@ class helper {
      *        this, the very first successful digest permanently silences
      *        every later run — this is what actually happened before.
      */
+    /**
+     * Site-wide staff digest schedule, from admin settings. One schedule
+     * for every rule's staff digest, course-level and cross-course alike
+     * — deliberately not per-rule, to keep this simple to reason about.
+     *
+     * @return array{frequency: string, hour: int, day_of_week: int, day_of_month: string}
+     *         frequency is 'daily'|'weekly'|'monthly'; day_of_week is
+     *         1 (Monday) through 7 (Sunday); day_of_month is '1'..'28' or
+     *         'last'.
+     */
+    public static function get_staff_digest_schedule(): array {
+        return [
+            'frequency'    => get_config('local_asyncwatch', 'staff_digest_frequency') ?: 'daily',
+            'hour'         => max(0, min(23, (int)(get_config('local_asyncwatch', 'staff_digest_hour') ?: 8))),
+            'day_of_week'  => max(1, min(7, (int)(get_config('local_asyncwatch', 'staff_digest_day_of_week') ?: 1))),
+            'day_of_month' => (string)(get_config('local_asyncwatch', 'staff_digest_day_of_month') ?: '1'),
+        ];
+    }
+
+    /**
+     * The start of the CURRENT staff-digest period, per the site-wide
+     * schedule — i.e. the most recent scheduled send time at or before
+     * $now. A staff digest counts as "already sent this period" if it
+     * went out at or after this timestamp; see notification_already_sent()
+     * and global_notification_already_sent(), which both take an
+     * elapsed-seconds window rather than an absolute timestamp — callers
+     * pass ($now - this value) as that window.
+     *
+     * Uses the site's server timezone, since this is a scheduling
+     * decision (when does the digest go out) rather than content shown
+     * to a specific recipient.
+     */
+    public static function staff_digest_period_start(int $now): int {
+        $schedule = self::get_staff_digest_schedule();
+        $tz = \core_date::get_server_timezone_object();
+
+        switch ($schedule['frequency']) {
+            case 'weekly':
+                $date = new \DateTime('@' . $now);
+                $date->setTimezone($tz);
+                $current_dow = (int)$date->format('N'); // 1=Monday..7=Sunday
+                $days_back = ($current_dow - $schedule['day_of_week'] + 7) % 7;
+                $date->modify("-{$days_back} days");
+                $date->setTime($schedule['hour'], 0, 0);
+                if ($date->getTimestamp() > $now) {
+                    $date->modify('-7 days');
+                }
+                return $date->getTimestamp();
+
+            case 'monthly':
+                $date = new \DateTime('@' . $now);
+                $date->setTimezone($tz);
+                $candidate = self::monthly_candidate($date, $schedule['day_of_month'], $schedule['hour']);
+                if ($candidate->getTimestamp() > $now) {
+                    $prev = clone $date;
+                    $prev->modify('first day of last month');
+                    $candidate = self::monthly_candidate($prev, $schedule['day_of_month'], $schedule['hour']);
+                }
+                return $candidate->getTimestamp();
+
+            case 'daily':
+            default:
+                $date = new \DateTime('@' . $now);
+                $date->setTimezone($tz);
+                $date->setTime($schedule['hour'], 0, 0);
+                if ($date->getTimestamp() > $now) {
+                    $date->modify('-1 day');
+                }
+                return $date->getTimestamp();
+        }
+    }
+
+    /**
+     * The configured day-of-month send time within the same month as
+     * $date — 'last' means the actual final calendar day of that month,
+     * whatever its length; a numeric day is clamped to the month's last
+     * day so "31" in February doesn't roll over into March.
+     */
+    private static function monthly_candidate(\DateTime $date, string $day_of_month, int $hour): \DateTime {
+        $candidate = clone $date;
+        if ($day_of_month === 'last') {
+            $candidate->modify('last day of this month');
+        } else {
+            $last_day = (int)$candidate->format('t');
+            $target_day = max(1, min($last_day, (int)$day_of_month));
+            $candidate->setDate((int)$candidate->format('Y'), (int)$candidate->format('n'), $target_day);
+        }
+        $candidate->setTime($hour, 0, 0);
+        return $candidate;
+    }
+
     public static function notification_already_sent(int $ruleid, int $userid, string $type, ?int $within_seconds = null): bool {
         global $DB;
         $params = ['ruleid' => $ruleid, 'userid' => $userid, 'type' => $type];

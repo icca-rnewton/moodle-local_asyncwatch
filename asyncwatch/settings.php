@@ -49,6 +49,70 @@ if ($hassiteconfig) {
         get_string('profilefield_allowlist_desc', 'local_asyncwatch')
     ));
 
+    // ── Staff digest schedule ─────────────────────────────────────────────────
+    // One site-wide schedule for every rule's staff digest (course-level and
+    // cross-course both use it) — deliberately not per-rule, to keep this
+    // simple. Previously staff digests were deduplicated on a short rolling
+    // window meant to mean "once per cron run", which on this plugin's
+    // 15/45-minutes-past-the-hour schedule meant re-sending up to ~48 times
+    // a day for any rule with a persistently breaching/warning student. This
+    // schedule replaces that with an actual once-per-period cadence.
+    $settingspage->add(new admin_setting_heading(
+        'local_asyncwatch/staffdigestscheduleheading',
+        get_string('staffdigestscheduleheading', 'local_asyncwatch'),
+        get_string('staffdigestscheduleheading_desc', 'local_asyncwatch')
+    ));
+    $settingspage->add(new admin_setting_configselect(
+        'local_asyncwatch/staff_digest_frequency',
+        get_string('staffdigest_frequency', 'local_asyncwatch'),
+        get_string('staffdigest_frequency_desc', 'local_asyncwatch'),
+        'daily',
+        [
+            'daily'   => get_string('staffdigest_freq_daily',   'local_asyncwatch'),
+            'weekly'  => get_string('staffdigest_freq_weekly',  'local_asyncwatch'),
+            'monthly' => get_string('staffdigest_freq_monthly', 'local_asyncwatch'),
+        ]
+    ));
+    $hour_choices = [];
+    for ($h = 0; $h < 24; $h++) {
+        $hour_choices[(string)$h] = sprintf('%02d:00', $h);
+    }
+    $settingspage->add(new admin_setting_configselect(
+        'local_asyncwatch/staff_digest_hour',
+        get_string('staffdigest_hour', 'local_asyncwatch'),
+        get_string('staffdigest_hour_desc', 'local_asyncwatch'),
+        '8',
+        $hour_choices
+    ));
+    $dow_choices = [
+        '1' => get_string('monday',    'calendar'),
+        '2' => get_string('tuesday',   'calendar'),
+        '3' => get_string('wednesday', 'calendar'),
+        '4' => get_string('thursday',  'calendar'),
+        '5' => get_string('friday',    'calendar'),
+        '6' => get_string('saturday',  'calendar'),
+        '7' => get_string('sunday',    'calendar'),
+    ];
+    $settingspage->add(new admin_setting_configselect(
+        'local_asyncwatch/staff_digest_day_of_week',
+        get_string('staffdigest_dayofweek', 'local_asyncwatch'),
+        get_string('staffdigest_dayofweek_desc', 'local_asyncwatch'),
+        '1',
+        $dow_choices
+    ));
+    $dom_choices = [];
+    for ($d = 1; $d <= 28; $d++) {
+        $dom_choices[(string)$d] = (string)$d;
+    }
+    $dom_choices['last'] = get_string('staffdigest_lastday', 'local_asyncwatch');
+    $settingspage->add(new admin_setting_configselect(
+        'local_asyncwatch/staff_digest_day_of_month',
+        get_string('staffdigest_dayofmonth', 'local_asyncwatch'),
+        get_string('staffdigest_dayofmonth_desc', 'local_asyncwatch'),
+        '1',
+        $dom_choices
+    ));
+
     // ── Per-course rule staff report emails ─────────────────────────────────
     $settingspage->add(new admin_setting_heading(
         'local_asyncwatch/staffreportheading',

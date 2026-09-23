@@ -19,17 +19,6 @@ use core\task\scheduled_task;
 
 class check_progress extends scheduled_task {
 
-    /**
-     * Staff digests are meant to go out once per rule per cron RUN, not
-     * once ever (see send_staff_digest()'s docblock) — this window is how
-     * "already sent this run" is defined. Comfortably below the plugin's
-     * own 15/45-minutes-past-the-hour schedule, so a legitimately new run
-     * always sees already_sent() as false, while still guarding against a
-     * genuine double-execution (e.g. a manual "Run now" landing close to
-     * the scheduled run).
-     */
-    private const STAFF_DIGEST_DEDUP_WINDOW = 600; // 10 minutes.
-
     public function get_name(): string {
         return get_string('pluginname', 'local_asyncwatch') . ': Check Progress';
     }
@@ -188,16 +177,21 @@ class check_progress extends scheduled_task {
         }
 
         // ── Staff digest state ──────────────────────────────────────────────────
-        // Staff notifications are now a single "report" email per rule per run
-        // (with a CSV of affected students attached) rather than one email per
-        // student. Dedup uses userid=0 as a sentinel in asyncwatch_notifications,
-        // keyed on type 'breach_staff' / 'warning_staff'.
+        // Staff notifications are one "report" email per rule per PERIOD
+        // (with a CSV of affected students attached) rather than one email
+        // per student, and not one per cron run either — the period comes
+        // from the site-wide schedule in admin settings (daily/weekly/
+        // monthly, with a configurable time). Dedup uses userid=0 as a
+        // sentinel in asyncwatch_notifications, keyed on type
+        // 'breach_staff' / 'warning_staff', and counts as "already sent
+        // this period" if a row exists at or after the period's start.
+        $staff_digest_window = $now - helper::staff_digest_period_start($now);
         $want_breach_digest  = (bool)$rule->notify_staff_breach;
         $want_warning_digest = (bool)$rule->notify_staff_warning;
         $breach_digest_sent  = $want_breach_digest
-            && helper::notification_already_sent((int)$rule->id, 0, 'breach_staff', self::STAFF_DIGEST_DEDUP_WINDOW);
+            && helper::notification_already_sent((int)$rule->id, 0, 'breach_staff', $staff_digest_window);
         $warning_digest_sent = $want_warning_digest
-            && helper::notification_already_sent((int)$rule->id, 0, 'warning_staff', self::STAFF_DIGEST_DEDUP_WINDOW);
+            && helper::notification_already_sent((int)$rule->id, 0, 'warning_staff', $staff_digest_window);
 
         $breach_rows  = [];
         $warning_rows = [];
@@ -414,12 +408,15 @@ class check_progress extends scheduled_task {
         }
         $courses_str = implode(', ', $coursenames);
 
+        // See send_staff_digest()'s comment on the course-level equivalent
+        // — same site-wide schedule, same reasoning.
+        $staff_digest_window = $now - helper::staff_digest_period_start($now);
         $want_breach_digest  = (bool)$rule->notify_staff_breach;
         $want_warning_digest = (bool)$rule->notify_staff_warning;
         $breach_digest_sent  = $want_breach_digest
-            && helper::global_notification_already_sent($ruleid, 0, 'breach_staff', self::STAFF_DIGEST_DEDUP_WINDOW);
+            && helper::global_notification_already_sent($ruleid, 0, 'breach_staff', $staff_digest_window);
         $warning_digest_sent = $want_warning_digest
-            && helper::global_notification_already_sent($ruleid, 0, 'warning_staff', self::STAFF_DIGEST_DEDUP_WINDOW);
+            && helper::global_notification_already_sent($ruleid, 0, 'warning_staff', $staff_digest_window);
 
         // ── Bulk load: profile field sync state, if this rule targets one ─────
         $profile_fieldid = null;
