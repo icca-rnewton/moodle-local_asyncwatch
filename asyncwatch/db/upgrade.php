@@ -511,5 +511,38 @@ function xmldb_local_asyncwatch_upgrade($oldversion) {
         upgrade_plugin_savepoint(true, 2026072600, 'local', 'asyncwatch');
     }
 
+    if ($oldversion < 2026072610) {
+
+        // The unique (ruleid, userid, type) index on both notification
+        // tables was right for the original design — a learner gets one
+        // breach/warning email per rule, ever — but the staff digest
+        // (userid = 0, the sentinel) now needs a NEW row every period
+        // under the site-wide digest schedule, and this constraint
+        // rejects every one after the first with a duplicate-key error,
+        // silently caught by the per-rule cron try/catch, so the digest
+        // never records as sent and re-fires on every subsequent run.
+        // The application layer (notification_already_sent() /
+        // global_notification_already_sent()) is what actually decides
+        // whether to attempt an insert at all, so this DB-level
+        // constraint was always a defensive backstop, not the real
+        // dedup mechanism — dropping it doesn't weaken learner dedup in
+        // practice, since nothing inserts a learner row without that
+        // check passing first.
+
+        $table = new xmldb_table('asyncwatch_notifications');
+        $index = new xmldb_index('idx_rule_user_type', XMLDB_INDEX_UNIQUE, ['ruleid', 'userid', 'type']);
+        if ($dbman->index_exists($table, $index)) {
+            $dbman->drop_index($table, $index);
+        }
+
+        $table = new xmldb_table('asyncwatch_global_notifications');
+        $index = new xmldb_index('uniq_rule_user_type', XMLDB_INDEX_UNIQUE, ['ruleid', 'userid', 'type']);
+        if ($dbman->index_exists($table, $index)) {
+            $dbman->drop_index($table, $index);
+        }
+
+        upgrade_plugin_savepoint(true, 2026072610, 'local', 'asyncwatch');
+    }
+
     return true;
 }

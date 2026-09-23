@@ -80,9 +80,6 @@
         <KEY NAME="fk_rule" TYPE="foreign" FIELDS="ruleid" REFTABLE="asyncwatch_rules" REFFIELDS="id"/>
         <KEY NAME="fk_user" TYPE="foreign" FIELDS="userid" REFTABLE="user" REFFIELDS="id"/>
       </KEYS>
-      <INDEXES>
-        <INDEX NAME="idx_rule_user_type" UNIQUE="true" FIELDS="ruleid,userid,type"/>
-      </INDEXES>
     </TABLE>
 
     <!-- ================================================================
@@ -290,9 +287,6 @@
         <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
         <KEY NAME="fk_rule" TYPE="foreign" FIELDS="ruleid" REFTABLE="asyncwatch_global_rules" REFFIELDS="id"/>
       </KEYS>
-      <INDEXES>
-        <INDEX NAME="uniq_rule_user_type" UNIQUE="true" FIELDS="ruleid,userid,type"/>
-      </INDEXES>
     </TABLE>
 
   </TABLES>
