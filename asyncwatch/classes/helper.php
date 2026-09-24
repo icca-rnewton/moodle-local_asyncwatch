@@ -163,6 +163,7 @@ class helper {
         $DB->delete_records('asyncwatch_rule_restrict_cohorts', ['ruleid' => $ruleid]);
         $DB->delete_records('asyncwatch_rule_overrides',        ['ruleid' => $ruleid]);
         $DB->delete_records('asyncwatch_rule_cohort_overrides', ['ruleid' => $ruleid]);
+        $DB->delete_records('asyncwatch_rule_extra_recipients', ['ruleid' => $ruleid]);
         $DB->delete_records('asyncwatch_rules',                 ['id'     => $ruleid]);
     }
 
@@ -1194,13 +1195,22 @@ class helper {
         return $candidate;
     }
 
-    public static function notification_already_sent(int $ruleid, int $userid, string $type, ?int $within_seconds = null): bool {
+    public static function notification_already_sent(
+        int $ruleid, int $userid, string $type, ?int $within_seconds = null, ?int $now = null
+    ): bool {
         global $DB;
         $params = ['ruleid' => $ruleid, 'userid' => $userid, 'type' => $type];
         $select = "ruleid = :ruleid AND userid = :userid AND type = :type";
         if ($within_seconds !== null) {
             $select .= " AND timesent >= :since";
-            $params['since'] = time() - $within_seconds;
+            // Use the caller's own frozen "now" when given, rather than a
+            // fresh time() call — on a slow run (e.g. sluggish SMTP that
+            // morning), rules processed later can see time() drift
+            // meaningfully past when the run actually started, shifting
+            // this cutoff forward enough to make an already-sent digest
+            // look unsent again. Falls back to time() only if a caller
+            // genuinely has no frozen "now" to hand in.
+            $params['since'] = ($now ?? time()) - $within_seconds;
         }
         return $DB->record_exists_select('asyncwatch_notifications', $select, $params);
     }
@@ -1208,13 +1218,13 @@ class helper {
     /**
      * Record that a notification was sent.
      */
-    public static function record_notification(int $ruleid, int $userid, string $type): void {
+    public static function record_notification(int $ruleid, int $userid, string $type, ?int $now = null): void {
         global $DB;
         $DB->insert_record('asyncwatch_notifications', (object)[
             'ruleid'    => $ruleid,
             'userid'    => $userid,
             'type'      => $type,
-            'timesent'  => time(),
+            'timesent'  => $now ?? time(),
         ]);
     }
 
@@ -1690,11 +1700,12 @@ class helper {
      */
     public static function delete_global_rule(int $ruleid): void {
         global $DB;
-        $DB->delete_records('asyncwatch_global_notifications',  ['ruleid' => $ruleid]);
-        $DB->delete_records('asyncwatch_global_rule_overrides', ['ruleid' => $ruleid]);
-        $DB->delete_records('asyncwatch_global_rule_cohorts',   ['ruleid' => $ruleid]);
-        $DB->delete_records('asyncwatch_global_rule_courses',   ['ruleid' => $ruleid]);
-        $DB->delete_records('asyncwatch_global_rules',          ['id'     => $ruleid]);
+        $DB->delete_records('asyncwatch_global_notifications',       ['ruleid' => $ruleid]);
+        $DB->delete_records('asyncwatch_global_rule_overrides',      ['ruleid' => $ruleid]);
+        $DB->delete_records('asyncwatch_global_rule_cohorts',        ['ruleid' => $ruleid]);
+        $DB->delete_records('asyncwatch_global_rule_courses',        ['ruleid' => $ruleid]);
+        $DB->delete_records('asyncwatch_global_rule_extra_recipients', ['ruleid' => $ruleid]);
+        $DB->delete_records('asyncwatch_global_rules',                ['id'     => $ruleid]);
     }
 
     /**
@@ -1753,9 +1764,22 @@ class helper {
      * course-scoped features (course-level rule Restrictions, group/cohort
      * Overrides). Unlike get_all_cohorts(), this respects Moodle's own
      * cohort visibility rules (category-level cohorts, the cohort
-     * "visible" flag) via core's cohort_get_visible_list(), rather than
-     * exposing every cohort on the entire site to anyone who happens to
-     * have local/asyncwatch:manage in a single course.
+     * "visible" flag), rather than exposing every cohort on the entire
+     * site to anyone who happens to have local/asyncwatch:manage in a
+     * single course.
+     *
+     * Deliberately reimplemented directly against context/capability
+     * primitives rather than calling cohort_get_visible_list() — that
+     * function does not exist on Moodle 4.5 (removed/renamed at some
+     * point after this was first written and tested against an earlier
+     * version), and core\context's get_parent_context_ids()/
+     * instance_by_id() plus has_capability() are far more stable,
+     * long-standing APIs to depend on instead. The visibility rule
+     * mirrors what that function used to do: a cohort is reachable from
+     * a course if its own context is the course's category, an ancestor
+     * category, or the system context; and if it's not marked visible,
+     * it's only included when the current user holds
+     * moodle/cohort:view in that cohort's own context.
      *
      * get_all_cohorts() is still the right call for the two genuinely
      * site-wide admin pages (globalrules.php, globaloverrides.php), which
@@ -1765,15 +1789,26 @@ class helper {
      * @return array cohortid => stdClass{id, name}
      */
     public static function get_visible_cohorts_for_course(int $courseid): array {
-        global $CFG;
-        require_once($CFG->dirroot . '/cohort/lib.php');
+        global $DB;
 
-        $course = get_course($courseid);
-        $visible = cohort_get_visible_list($course, false); // [cohortid => name]
+        $context     = \context_course::instance($courseid);
+        $context_ids = $context->get_parent_context_ids(true); // Includes the course context itself.
+
+        list($insql, $params) = $DB->get_in_or_equal($context_ids);
+        $rows = $DB->get_records_sql(
+            "SELECT id, name, contextid, visible FROM {cohort} WHERE contextid $insql",
+            $params
+        );
 
         $cohorts = [];
-        foreach ($visible as $id => $name) {
-            $cohorts[(int)$id] = (object)['id' => (int)$id, 'name' => $name];
+        foreach ($rows as $c) {
+            if (!$c->visible) {
+                $cohort_context = \context::instance_by_id($c->contextid);
+                if (!has_capability('moodle/cohort:view', $cohort_context)) {
+                    continue; // Hidden cohort, and this user has no override capability for it.
+                }
+            }
+            $cohorts[(int)$c->id] = (object)['id' => (int)$c->id, 'name' => $c->name];
         }
         return $cohorts;
     }
@@ -2015,13 +2050,16 @@ class helper {
      * Cross-course counterpart to notification_already_sent() — same
      * $within_seconds behaviour, same reasoning.
      */
-    public static function global_notification_already_sent(int $ruleid, int $userid, string $type, ?int $within_seconds = null): bool {
+    public static function global_notification_already_sent(
+        int $ruleid, int $userid, string $type, ?int $within_seconds = null, ?int $now = null
+    ): bool {
         global $DB;
         $params = ['ruleid' => $ruleid, 'userid' => $userid, 'type' => $type];
         $select = "ruleid = :ruleid AND userid = :userid AND type = :type";
         if ($within_seconds !== null) {
             $select .= " AND timesent >= :since";
-            $params['since'] = time() - $within_seconds;
+            // See notification_already_sent()'s comment — same reasoning.
+            $params['since'] = ($now ?? time()) - $within_seconds;
         }
         return $DB->record_exists_select('asyncwatch_global_notifications', $select, $params);
     }
@@ -2029,13 +2067,13 @@ class helper {
     /**
      * Record that a cross-course notification was sent.
      */
-    public static function record_global_notification(int $ruleid, int $userid, string $type): void {
+    public static function record_global_notification(int $ruleid, int $userid, string $type, ?int $now = null): void {
         global $DB;
         $DB->insert_record('asyncwatch_global_notifications', (object)[
             'ruleid'   => $ruleid,
             'userid'   => $userid,
             'type'     => $type,
-            'timesent' => time(),
+            'timesent' => $now ?? time(),
         ]);
     }
 
@@ -2060,6 +2098,56 @@ class helper {
     public static function set_global_staff_recipient_ids(array $userids): void {
         $ids = array_values(array_unique(array_filter(array_map('intval', $userids))));
         set_config('global_staff_recipients', json_encode($ids), 'local_asyncwatch');
+    }
+
+    /**
+     * Additional staff recipients for one course-level rule's digest — on
+     * top of the course-wide list (Notifications tab), never a
+     * replacement for it. See set_rule_extra_recipients().
+     */
+    public static function get_rule_extra_recipient_ids(int $ruleid): array {
+        global $DB;
+        $rows = $DB->get_records('asyncwatch_rule_extra_recipients', ['ruleid' => $ruleid], '', 'userid');
+        return array_map('intval', array_keys($rows));
+    }
+
+    public static function set_rule_extra_recipients(int $ruleid, array $userids): void {
+        global $DB;
+        $DB->delete_records('asyncwatch_rule_extra_recipients', ['ruleid' => $ruleid]);
+        foreach (array_unique(array_map('intval', $userids)) as $uid) {
+            $DB->insert_record('asyncwatch_rule_extra_recipients', (object)['ruleid' => $ruleid, 'userid' => $uid]);
+        }
+    }
+
+    /**
+     * Userids on a course's Notifications-tab staff recipient list — the
+     * "overseers" who see every rule in the course regardless of any
+     * rule-specific additional recipients.
+     */
+    public static function get_course_staff_recipient_ids(int $courseid): array {
+        global $DB;
+        $tpl = $DB->get_record('asyncwatch_ntpl', ['courseid' => $courseid], 'staff_recipients');
+        if (!$tpl) return [];
+        $recipients = json_decode($tpl->staff_recipients ?? '{}', true) ?: [];
+        return array_values(array_unique(array_map('intval', $recipients['userids'] ?? [])));
+    }
+
+    /**
+     * Additional staff recipients for one cross-course rule's digest — on
+     * top of the site-wide list, never a replacement for it.
+     */
+    public static function get_global_rule_extra_recipient_ids(int $ruleid): array {
+        global $DB;
+        $rows = $DB->get_records('asyncwatch_global_rule_extra_recipients', ['ruleid' => $ruleid], '', 'userid');
+        return array_map('intval', array_keys($rows));
+    }
+
+    public static function set_global_rule_extra_recipients(int $ruleid, array $userids): void {
+        global $DB;
+        $DB->delete_records('asyncwatch_global_rule_extra_recipients', ['ruleid' => $ruleid]);
+        foreach (array_unique(array_map('intval', $userids)) as $uid) {
+            $DB->insert_record('asyncwatch_global_rule_extra_recipients', (object)['ruleid' => $ruleid, 'userid' => $uid]);
+        }
     }
 
     /**

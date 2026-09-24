@@ -544,5 +544,40 @@ function xmldb_local_asyncwatch_upgrade($oldversion) {
         upgrade_plugin_savepoint(true, 2026072610, 'local', 'asyncwatch');
     }
 
+    if ($oldversion < 2026072613) {
+
+        // Additional staff recipients per rule — additive on top of the
+        // course-wide (or site-wide, for cross-course rules) list, never
+        // a replacement for it.
+
+        $table = new xmldb_table('asyncwatch_rule_extra_recipients');
+        $table->add_field('id',     XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, XMLDB_SEQUENCE);
+        $table->add_field('ruleid', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL);
+        $table->add_field('userid', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL);
+        $table->add_key('primary', XMLDB_KEY_PRIMARY, ['id']);
+        if (!$dbman->table_exists($table)) {
+            $dbman->create_table($table);
+        }
+        $index = new xmldb_index('uniq_ruleid_userid', XMLDB_INDEX_UNIQUE, ['ruleid', 'userid']);
+        if (!$dbman->index_exists($table, $index)) {
+            $dbman->add_index($table, $index);
+        }
+
+        $table = new xmldb_table('asyncwatch_global_rule_extra_recipients');
+        $table->add_field('id',     XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, XMLDB_SEQUENCE);
+        $table->add_field('ruleid', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL);
+        $table->add_field('userid', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL);
+        $table->add_key('primary', XMLDB_KEY_PRIMARY, ['id']);
+        if (!$dbman->table_exists($table)) {
+            $dbman->create_table($table);
+        }
+        $index = new xmldb_index('uniq_ruleid_userid', XMLDB_INDEX_UNIQUE, ['ruleid', 'userid']);
+        if (!$dbman->index_exists($table, $index)) {
+            $dbman->add_index($table, $index);
+        }
+
+        upgrade_plugin_savepoint(true, 2026072613, 'local', 'asyncwatch');
+    }
+
     return true;
 }

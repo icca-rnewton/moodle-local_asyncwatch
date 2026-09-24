@@ -189,9 +189,9 @@ class check_progress extends scheduled_task {
         $want_breach_digest  = (bool)$rule->notify_staff_breach;
         $want_warning_digest = (bool)$rule->notify_staff_warning;
         $breach_digest_sent  = $want_breach_digest
-            && helper::notification_already_sent((int)$rule->id, 0, 'breach_staff', $staff_digest_window);
+            && helper::notification_already_sent((int)$rule->id, 0, 'breach_staff', $staff_digest_window, $now);
         $warning_digest_sent = $want_warning_digest
-            && helper::notification_already_sent((int)$rule->id, 0, 'warning_staff', $staff_digest_window);
+            && helper::notification_already_sent((int)$rule->id, 0, 'warning_staff', $staff_digest_window, $now);
 
         $breach_rows  = [];
         $warning_rows = [];
@@ -299,7 +299,13 @@ class check_progress extends scheduled_task {
         if (!$body_tpl)    $body_tpl    = get_string($default_body_key,    'local_asyncwatch');
 
         $recipients = json_decode($tpl->staff_recipients ?? '{}', true) ?: [];
-        $user_ids   = array_unique(array_map('intval', $recipients['userids'] ?? []));
+        $user_ids   = array_map('intval', $recipients['userids'] ?? []);
+        // Additional recipients are additive on top of the course-wide
+        // list, never a replacement for it — anyone on the Notifications
+        // tab's list always gets every rule's digest regardless of what's
+        // configured here.
+        $extra_ids  = helper::get_rule_extra_recipient_ids((int)$rule->id);
+        $user_ids   = array_values(array_unique(array_merge($user_ids, $extra_ids)));
         if (empty($user_ids)) return;
 
         // Content is generated once and sent to every recipient, so there's
@@ -334,7 +340,7 @@ class check_progress extends scheduled_task {
         @unlink($csv_path);
 
         if ($sent) {
-            helper::record_notification((int)$rule->id, 0, $type . '_staff');
+            helper::record_notification((int)$rule->id, 0, $type . '_staff', $now);
             mtrace("  AsyncWatch: {$type} staff digest → " . count($user_ids)
                 . " recipient(s), " . count($rows) . " affected student(s), rule {$rule->id}");
         }
@@ -414,9 +420,9 @@ class check_progress extends scheduled_task {
         $want_breach_digest  = (bool)$rule->notify_staff_breach;
         $want_warning_digest = (bool)$rule->notify_staff_warning;
         $breach_digest_sent  = $want_breach_digest
-            && helper::global_notification_already_sent($ruleid, 0, 'breach_staff', $staff_digest_window);
+            && helper::global_notification_already_sent($ruleid, 0, 'breach_staff', $staff_digest_window, $now);
         $warning_digest_sent = $want_warning_digest
-            && helper::global_notification_already_sent($ruleid, 0, 'warning_staff', $staff_digest_window);
+            && helper::global_notification_already_sent($ruleid, 0, 'warning_staff', $staff_digest_window, $now);
 
         // ── Bulk load: profile field sync state, if this rule targets one ─────
         $profile_fieldid = null;
@@ -549,7 +555,7 @@ class check_progress extends scheduled_task {
         if (!$subject || !$body) return;
 
         if (helper::send_message($user, $subject, $body)) {
-            helper::record_global_notification((int)$rule->id, (int)$user->id, 'breach');
+            helper::record_global_notification((int)$rule->id, (int)$user->id, 'breach', $now);
             $already_sent[$key] = true;
             mtrace("  AsyncWatch: breach email → learner {$user->id} global rule {$rule->id}");
         }
@@ -580,7 +586,7 @@ class check_progress extends scheduled_task {
         if (!$subject || !$body) return;
 
         if (helper::send_message($user, $subject, $body)) {
-            helper::record_global_notification((int)$rule->id, (int)$user->id, 'warning');
+            helper::record_global_notification((int)$rule->id, (int)$user->id, 'warning', $now);
             $already_sent[$key] = true;
             mtrace("  AsyncWatch: warning email → learner {$user->id} global rule {$rule->id}");
         }
@@ -590,6 +596,9 @@ class check_progress extends scheduled_task {
         string $type, \stdClass $rule, array $rows, string $courses_str, string $site_name, int $now
     ): void {
         $recipient_ids = helper::get_global_staff_recipient_ids();
+        // Same additive reasoning as send_staff_digest() — see its comment.
+        $extra_ids     = helper::get_global_rule_extra_recipient_ids((int)$rule->id);
+        $recipient_ids = array_values(array_unique(array_merge($recipient_ids, $extra_ids)));
         if (empty($recipient_ids)) return;
 
         $config_prefix        = $type === 'warning' ? 'global_staff_warning' : 'global_staff_breach';
@@ -630,7 +639,7 @@ class check_progress extends scheduled_task {
         @unlink($csv_path);
 
         if ($sent) {
-            helper::record_global_notification((int)$rule->id, 0, $type . '_staff');
+            helper::record_global_notification((int)$rule->id, 0, $type . '_staff', $now);
             mtrace("  AsyncWatch: {$type} staff digest → " . count($recipient_ids)
                 . " recipient(s), " . count($rows) . " affected student(s), global rule {$rule->id}");
         }
@@ -660,7 +669,7 @@ class check_progress extends scheduled_task {
         if (!$subject || !$body) return;
 
         if (helper::send_message($user, $subject, $body)) {
-            helper::record_notification((int)$rule->id, (int)$user->id, 'breach');
+            helper::record_notification((int)$rule->id, (int)$user->id, 'breach', $now);
             $already_sent[$key] = true;
             mtrace("  AsyncWatch: breach email → learner {$user->id} rule {$rule->id}");
         }
@@ -694,7 +703,7 @@ class check_progress extends scheduled_task {
         if (!$subject || !$body) return;
 
         if (helper::send_message($user, $subject, $body)) {
-            helper::record_notification((int)$rule->id, (int)$user->id, 'warning');
+            helper::record_notification((int)$rule->id, (int)$user->id, 'warning', $now);
             $already_sent[$key] = true;
             mtrace("  AsyncWatch: warning email → learner {$user->id} rule {$rule->id}");
         }

@@ -122,6 +122,7 @@ class rule_form extends \moodleform {
         $mform->addElement('advcheckbox', 'notify_staff_breach',
             get_string('notify_staff', 'local_asyncwatch'), '');
         $mform->setDefault('notify_staff_breach', 0);
+        $mform->addHelpButton('notify_staff_breach', 'notify_staff', 'local_asyncwatch');
 
         // Warning notifications.
         $mform->addElement('static', 'notify_warn_label', '',
@@ -133,6 +134,37 @@ class rule_form extends \moodleform {
         $mform->addElement('advcheckbox', 'notify_staff_warning',
             get_string('notify_staff', 'local_asyncwatch'), '');
         $mform->setDefault('notify_staff_warning', 0);
+        $mform->addHelpButton('notify_staff_warning', 'notify_staff', 'local_asyncwatch');
+
+        // ── Additional staff recipients ───────────────────────────────────────
+        $mform->addElement('header', 'extra_recipients_header',
+            get_string('extra_recipients_header', 'local_asyncwatch'));
+
+        $overseer_names = $this->_customdata['overseer_names'] ?? [];
+        if (!empty($overseer_names)) {
+            $mform->addElement('static', 'extra_recipients_overseers', get_string('extra_recipients_overseers', 'local_asyncwatch'),
+                implode(', ', array_map('s', $overseer_names)));
+        } else {
+            $mform->addElement('static', 'extra_recipients_overseers', '',
+                \html_writer::tag('p',
+                    get_string('extra_recipients_no_overseers', 'local_asyncwatch'),
+                    ['class' => 'text-muted small mb-2']
+                )
+            );
+        }
+        $mform->addElement('static', 'extra_recipients_desc', '',
+            \html_writer::tag('p',
+                get_string('extra_recipients_desc', 'local_asyncwatch'),
+                ['class' => 'text-muted small mb-2']
+            )
+        );
+
+        $extra_recipient_options = $this->_customdata['extra_recipient_options'] ?? [];
+        $el = $mform->addElement('autocomplete', 'extra_recipient_ids',
+            get_string('extra_recipients', 'local_asyncwatch'), $extra_recipient_options);
+        $el->setMultiple(true);
+        $mform->setType('extra_recipient_ids', PARAM_INT);
+        $mform->addHelpButton('extra_recipient_ids', 'extra_recipients', 'local_asyncwatch');
 
         // ── Profile field sync ──────────────────────────────────────────────
         $mform->addElement('header', 'profilefield_header',

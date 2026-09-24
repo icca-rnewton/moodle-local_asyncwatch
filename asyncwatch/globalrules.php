@@ -18,7 +18,6 @@ require_once($CFG->libdir . '/adminlib.php');
 
 use local_asyncwatch\helper;
 use local_asyncwatch\form\global_rule_form;
-use local_asyncwatch\form\global_recipients_form;
 use local_asyncwatch\form\rule_form;
 
 // ── Auth / page setup ───────────────────────────────────────────────────────
@@ -49,39 +48,6 @@ if ($action === 'bulkdelete' && confirm_sesskey()) {
         \core\output\notification::NOTIFY_SUCCESS);
 }
 
-// ── Staff recipients (site-wide, shared by every cross-course rule) ────────
-$recipients_form = null;
-if ($action === 'recipients') {
-    $all_users = $DB->get_records_sql(
-        "SELECT id, firstname, lastname, email,
-                firstnamephonetic, lastnamephonetic, middlename, alternatename
-           FROM {user}
-          WHERE deleted = 0 AND suspended = 0 AND id != :guestid
-          ORDER BY lastname ASC, firstname ASC",
-        ['guestid' => $CFG->siteguest ?? 1]
-    );
-    $user_options = [];
-    foreach ($all_users as $u) {
-        $user_options[$u->id] = fullname($u) . ' (' . $u->email . ')';
-    }
-
-    $recipients_form = new global_recipients_form($formurl->out(false), ['users' => $user_options]);
-
-    if ($recipients_form->is_cancelled()) {
-        redirect($pageurl);
-    }
-
-    if ($data = $recipients_form->get_data()) {
-        helper::set_global_staff_recipient_ids((array)($data->staff_recipients_ids ?? []));
-        redirect($pageurl, get_string('globalrule_recipients_saved', 'local_asyncwatch'), null,
-            \core\output\notification::NOTIFY_SUCCESS);
-    }
-
-    $recipients_form->set_data([
-        'staff_recipients_ids' => helper::get_global_staff_recipient_ids(),
-    ]);
-}
-
 // ── Data shared by the form and the list ────────────────────────────────────
 $courses_with_parts = helper::get_courses_with_parts();
 $all_cohorts_raw     = helper::get_all_cohorts();
@@ -97,14 +63,66 @@ foreach ($all_cohorts_raw as $ch) {
 // ── Add / Edit form ──────────────────────────────────────────────────────────
 $form = null;
 if (in_array($action, ['add', 'edit'])) {
+    // Additional staff recipients — site-wide overseers are shown for
+    // reference and excluded from the picker, since adding one would be a
+    // no-op (they already get every cross-course rule's digest).
+    $overseer_ids = helper::get_global_staff_recipient_ids();
+    $overseer_names = [];
+    if (!empty($overseer_ids)) {
+        list($ov_insql, $ov_params) = $DB->get_in_or_equal($overseer_ids);
+        $overseer_users = $DB->get_records_select('user',
+            "id $ov_insql AND deleted = 0", $ov_params,
+            'lastname ASC, firstname ASC',
+            'id, firstname, lastname, firstnamephonetic, lastnamephonetic, middlename, alternatename'
+        );
+        foreach ($overseer_users as $u) {
+            $overseer_names[] = fullname($u);
+        }
+    }
+
+    $all_users_for_extra = $DB->get_records_sql(
+        "SELECT id, firstname, lastname, email,
+                firstnamephonetic, lastnamephonetic, middlename, alternatename
+           FROM {user}
+          WHERE deleted = 0 AND suspended = 0 AND id != :guestid
+          ORDER BY lastname ASC, firstname ASC",
+        ['guestid' => $CFG->siteguest ?? 1]
+    );
+    $extra_recipient_options = [];
+    foreach ($all_users_for_extra as $u) {
+        if (in_array((int)$u->id, $overseer_ids, true)) {
+            continue; // Already an overseer — adding them here would do nothing.
+        }
+        $extra_recipient_options[(int)$u->id] = fullname($u) . ' (' . $u->email . ')';
+    }
+    // Preserve an already-selected extra recipient even if since
+    // suspended/deleted, so editing an existing rule doesn't silently
+    // clear it.
+    if ($action === 'edit' && $id) {
+        $existing_extra_ids = helper::get_global_rule_extra_recipient_ids($id);
+        $missing = array_diff($existing_extra_ids, array_keys($extra_recipient_options), $overseer_ids);
+        if (!empty($missing)) {
+            list($m_insql, $m_params) = $DB->get_in_or_equal($missing);
+            $missing_users = $DB->get_records_select('user',
+                "id $m_insql", $m_params, '',
+                'id, firstname, lastname, email, firstnamephonetic, lastnamephonetic, middlename, alternatename'
+            );
+            foreach ($missing_users as $u) {
+                $extra_recipient_options[(int)$u->id] = fullname($u) . ' (' . $u->email . ')';
+            }
+        }
+    }
+
     $form = new global_rule_form($formurl->out(false), [
-        'ruleid'                => $id,
-        'courses_with_parts'    => $courses_with_parts,
-        'cohorts'               => $cohort_options,
-        'profile_field_options' => helper::get_profile_field_options(),
+        'ruleid'                   => $id,
+        'courses_with_parts'       => $courses_with_parts,
+        'cohorts'                  => $cohort_options,
+        'profile_field_options'    => helper::get_profile_field_options(),
         // Deliberately unrestricted — local/asyncwatch:manageglobal is
         // already a genuine site-wide capability, so there's no course/
         // site privilege gap for the allowlist above to close here.
+        'overseer_names'           => $overseer_names,
+        'extra_recipient_options'  => $extra_recipient_options,
     ]);
 
     if ($form->is_cancelled()) {
@@ -135,6 +153,10 @@ if (in_array($action, ['add', 'edit'])) {
         $cohortids = array_map('intval', (array)($formdata->cohortids ?? []));
         helper::set_global_rule_cohorts($ruleid, $cohortids);
 
+        // Additional staff recipients — additive on top of the site-wide
+        // overseer list, never a replacement for it.
+        helper::set_global_rule_extra_recipients($ruleid, array_map('intval', (array)($formdata->extra_recipient_ids ?? [])));
+
         redirect($pageurl, get_string('globalrulesaved', 'local_asyncwatch'), null,
             \core\output\notification::NOTIFY_SUCCESS);
     }
@@ -158,6 +180,7 @@ if (in_array($action, ['add', 'edit'])) {
             'warn_value'             => $warn_fields['warn_value'],
             'warn_unit'              => $warn_fields['warn_unit'],
             'profilefield'           => $rule->profilefield ?? '',
+            'extra_recipient_ids'    => helper::get_global_rule_extra_recipient_ids($id),
         ]);
     }
 }
@@ -167,8 +190,9 @@ echo $OUTPUT->header();
 echo $OUTPUT->heading(get_string('globalrules', 'local_asyncwatch'));
 
 $tabs = [
-    new tabobject('globalrules', new moodle_url('/local/asyncwatch/globalrules.php'), get_string('globalrules', 'local_asyncwatch')),
-    new tabobject('globalreport', new moodle_url('/local/asyncwatch/globalreport.php'), get_string('globalreport', 'local_asyncwatch')),
+    new tabobject('globalrules',         new moodle_url('/local/asyncwatch/globalrules.php'),         get_string('globalrules', 'local_asyncwatch')),
+    new tabobject('globalreport',        new moodle_url('/local/asyncwatch/globalreport.php'),        get_string('globalreport', 'local_asyncwatch')),
+    new tabobject('globalnotifications', new moodle_url('/local/asyncwatch/globalnotifications.php'), get_string('tab_globalnotifications', 'local_asyncwatch')),
 ];
 echo $OUTPUT->tabtree($tabs, 'globalrules');
 
@@ -181,21 +205,9 @@ if ($form) {
 
     $form->display();
 
-} else if ($recipients_form) {
-
-    echo $OUTPUT->heading(get_string('globalrule_recipients', 'local_asyncwatch'), 4);
-    $recipients_form->display();
-
 } else {
 
     echo '<div class="alert alert-info">' . get_string('globalrules_intro', 'local_asyncwatch') . '</div>';
-
-    $recipient_count = count(helper::get_global_staff_recipient_ids());
-    $recipients_url  = new moodle_url($pageurl, ['action' => 'recipients']);
-    echo '<div class="mb-3">'
-       . html_writer::link($recipients_url,
-           get_string('globalrule_recipients', 'local_asyncwatch') . ' (' . $recipient_count . ')')
-       . '</div>';
 
     $rules = helper::get_global_rules();
 

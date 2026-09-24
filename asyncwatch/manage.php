@@ -161,13 +161,61 @@ if ($tab === 'rules' && in_array($action, ['addrule', 'editrule'])) {
         $current_profilefield = $DB->get_field('asyncwatch_rules', 'profilefield', ['id' => $id]) ?: null;
     }
 
+    // Additional staff recipients — course-wide overseers are shown for
+    // reference and excluded from the picker, since adding one would be a
+    // no-op (they already get every rule's digest).
+    $overseer_ids = helper::get_course_staff_recipient_ids($courseid);
+    $overseer_names = [];
+    if (!empty($overseer_ids)) {
+        list($ov_insql, $ov_params) = $DB->get_in_or_equal($overseer_ids);
+        $overseer_users = $DB->get_records_select('user',
+            "id $ov_insql AND deleted = 0", $ov_params,
+            'lastname ASC, firstname ASC',
+            'id, firstname, lastname, firstnamephonetic, lastnamephonetic, middlename, alternatename'
+        );
+        foreach ($overseer_users as $u) {
+            $overseer_names[] = fullname($u);
+        }
+    }
+
+    $extra_recipient_options = [];
+    foreach (get_enrolled_users(
+        $context, '', 0,
+        'u.id, u.firstname, u.lastname, u.email, u.firstnamephonetic, '
+        . 'u.lastnamephonetic, u.middlename, u.alternatename',
+        'u.lastname ASC, u.firstname ASC'
+    ) as $u) {
+        if (in_array((int)$u->id, $overseer_ids, true)) {
+            continue; // Already an overseer — adding them here would do nothing.
+        }
+        $extra_recipient_options[(int)$u->id] = fullname($u) . ' (' . $u->email . ')';
+    }
+    // Preserve an already-selected extra recipient even if no longer
+    // enrolled, so editing an existing rule doesn't silently clear it.
+    if ($action === 'editrule' && $id) {
+        $existing_extra_ids = helper::get_rule_extra_recipient_ids($id);
+        $missing = array_diff($existing_extra_ids, array_keys($extra_recipient_options), $overseer_ids);
+        if (!empty($missing)) {
+            list($m_insql, $m_params) = $DB->get_in_or_equal($missing);
+            $missing_users = $DB->get_records_select('user',
+                "id $m_insql AND deleted = 0", $m_params, '',
+                'id, firstname, lastname, email, firstnamephonetic, lastnamephonetic, middlename, alternatename'
+            );
+            foreach ($missing_users as $u) {
+                $extra_recipient_options[(int)$u->id] = fullname($u) . ' (' . $u->email . ')';
+            }
+        }
+    }
+
     $rule_form = new rule_form($formurl->out(false), [
-        'courseid'              => $courseid,
-        'ruleid'                => $id,
-        'total_parts'           => $total_parts,
-        'profile_field_options' => helper::get_profile_field_options(true, $current_profilefield),
-        'group_options'         => $group_options,
-        'cohort_options'        => $cohort_options,
+        'courseid'                 => $courseid,
+        'ruleid'                   => $id,
+        'total_parts'              => $total_parts,
+        'profile_field_options'    => helper::get_profile_field_options(true, $current_profilefield),
+        'group_options'            => $group_options,
+        'cohort_options'           => $cohort_options,
+        'overseer_names'           => $overseer_names,
+        'extra_recipient_options'  => $extra_recipient_options,
     ]);
 
     if ($rule_form->is_cancelled()) {
@@ -208,6 +256,10 @@ if ($tab === 'rules' && in_array($action, ['addrule', 'editrule'])) {
         helper::set_rule_restrict_groups($ruleid, array_map('intval', (array)($formdata->restrict_groupids ?? [])));
         helper::set_rule_restrict_cohorts($ruleid, array_map('intval', (array)($formdata->restrict_cohortids ?? [])));
 
+        // Additional staff recipients — additive on top of the course's
+        // overseer list, never a replacement for it.
+        helper::set_rule_extra_recipients($ruleid, array_map('intval', (array)($formdata->extra_recipient_ids ?? [])));
+
         redirect($baseurl, get_string('rulesaved', 'local_asyncwatch'), null, \core\output\notification::NOTIFY_SUCCESS);
     }
 
@@ -234,6 +286,7 @@ if ($tab === 'rules' && in_array($action, ['addrule', 'editrule'])) {
             'profilefield'           => $rule->profilefield ?? '',
             'restrict_groupids'      => helper::get_rule_restrict_groupids($id),
             'restrict_cohortids'     => helper::get_rule_restrict_cohortids($id),
+            'extra_recipient_ids'    => helper::get_rule_extra_recipient_ids($id),
         ]);
     }
 }

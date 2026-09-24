@@ -150,26 +150,15 @@ if ($hassiteconfig) {
         get_string('tpl_staff_warning_body_default', 'local_asyncwatch')
     ));
 
-    // ── Cross-course rule emails (learner + staff, both live here) ──────────
+    // ── Cross-course staff report emails ──────────────────────────────────────
+    // Learner email wording lives on its own page (globalnotifications.php,
+    // the Notifications tab under Cross-course Rules) — same split as
+    // course-level: learner wording is this feature's own content, staff
+    // wording is a site-wide default. See that page's own note.
     $settingspage->add(new admin_setting_heading(
         'local_asyncwatch/globalruleemailheading',
         get_string('globalruleemailheading', 'local_asyncwatch'),
         get_string('globalruleemailheading_desc', 'local_asyncwatch')
-    ));
-
-    // Behind — learner.
-    $settingspage->add(new admin_setting_configtext(
-        'local_asyncwatch/global_learner_breach_subject',
-        get_string('global_learner_breach_subject', 'local_asyncwatch'),
-        get_string('global_learner_breach_subject_desc', 'local_asyncwatch'),
-        get_string('tpl_global_learner_subject_default', 'local_asyncwatch'),
-        PARAM_TEXT
-    ));
-    $settingspage->add(new admin_setting_confightmleditor(
-        'local_asyncwatch/global_learner_breach_body',
-        get_string('global_learner_breach_body', 'local_asyncwatch'),
-        get_string('global_learner_breach_body_desc', 'local_asyncwatch'),
-        get_string('tpl_global_learner_body_default', 'local_asyncwatch')
     ));
 
     // Behind — staff report.
@@ -185,21 +174,6 @@ if ($hassiteconfig) {
         get_string('global_staff_breach_body', 'local_asyncwatch'),
         get_string('global_staff_breach_body_desc', 'local_asyncwatch'),
         get_string('tpl_global_staff_body_default', 'local_asyncwatch')
-    ));
-
-    // At-risk — learner.
-    $settingspage->add(new admin_setting_configtext(
-        'local_asyncwatch/global_learner_warning_subject',
-        get_string('global_learner_warning_subject', 'local_asyncwatch'),
-        get_string('global_learner_warning_subject_desc', 'local_asyncwatch'),
-        get_string('tpl_global_learner_warning_subject_default', 'local_asyncwatch'),
-        PARAM_TEXT
-    ));
-    $settingspage->add(new admin_setting_confightmleditor(
-        'local_asyncwatch/global_learner_warning_body',
-        get_string('global_learner_warning_body', 'local_asyncwatch'),
-        get_string('global_learner_warning_body_desc', 'local_asyncwatch'),
-        get_string('tpl_global_learner_warning_body_default', 'local_asyncwatch')
     ));
 
     // At-risk — staff report.
@@ -235,6 +209,13 @@ if ($hassiteconfig) {
         'local_asyncwatch_globalreport',
         get_string('globalreport', 'local_asyncwatch'),
         new moodle_url('/local/asyncwatch/globalreport.php'),
+        'local/asyncwatch:manageglobal'
+    ));
+
+    $ADMIN->add('localplugins', new admin_externalpage(
+        'local_asyncwatch_globalnotifications',
+        get_string('globalnotifications', 'local_asyncwatch'),
+        new moodle_url('/local/asyncwatch/globalnotifications.php'),
         'local/asyncwatch:manageglobal'
     ));
 }

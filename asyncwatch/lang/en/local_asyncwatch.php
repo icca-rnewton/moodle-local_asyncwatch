@@ -185,14 +185,6 @@ $string['staff_report_settings_link'] = 'The wording for staff report emails (Be
 $string['ph_courses']                    = 'Comma-separated list of the rule\'s courses';
 $string['globalruleemailheading']        = 'Cross-course rule emails';
 $string['globalruleemailheading_desc']   = 'Wording for rules that span multiple courses (Site administration → AsyncWatch → Cross-course Rules). These rules don\'t belong to one course, so this is the only place to set their wording — placeholders: {{courses}}, {{rulename}}, {{deadline}}, {{sitename}}, {{affected_count}}, plus {{firstname}}, {{lastname}}, {{fullname}}, {{email}}, {{parts_done}}, {{parts_required}} for the learner templates.';
-$string['global_learner_breach_subject']       = 'Learner behind email — subject';
-$string['global_learner_breach_subject_desc']  = 'Subject line for the personal email sent to a learner who has passed a cross-course rule\'s deadline.';
-$string['global_learner_breach_body']          = 'Learner behind email — body';
-$string['global_learner_breach_body_desc']     = 'Body text for the personal email sent to a learner who has passed a cross-course rule\'s deadline.';
-$string['global_learner_warning_subject']      = 'Learner at-risk email — subject';
-$string['global_learner_warning_subject_desc'] = 'Subject line for the personal email sent to a learner entering a cross-course rule\'s warning window.';
-$string['global_learner_warning_body']         = 'Learner at-risk email — body';
-$string['global_learner_warning_body_desc']    = 'Body text for the personal email sent to a learner entering a cross-course rule\'s warning window.';
 $string['global_staff_breach_subject']         = 'Staff behind report — subject';
 $string['global_staff_breach_subject_desc']    = 'Subject line for the staff report sent when learners have passed a cross-course rule\'s deadline.';
 $string['global_staff_breach_body']            = 'Staff behind report — body';
@@ -257,8 +249,9 @@ $string['globalrule_cohorts_desc']        = 'Leave empty to include anyone enrol
 $string['globalrule_col_courses']         = 'Courses';
 $string['globalrule_col_cohorts']         = 'Cohorts';
 $string['globalrule_overrides_link']      = 'Cohort overrides';
-$string['globalrule_recipients']          = 'Staff recipients';
-$string['globalrule_recipients_desc']     = 'These staff receive the report email (with CSV attached) for every cross-course rule, warning and behind alike. Shared by all cross-course rules — set per-rule recipients aren\'t available for these.';
+$string['globalnotifications']            = 'Cross-course Notifications';
+$string['tab_globalnotifications']        = 'Notifications';
+$string['globalrule_recipients_desc']     = 'These staff receive the report email (with CSV attached) for every cross-course rule, warning and behind alike — this is the overseer group. Individual rules can add extra recipients on top of this list from their own edit form; they can\'t remove anyone listed here.';
 $string['globalrule_recipients_saved']    = 'Staff recipients saved.';
 
 // Default templates
@@ -289,7 +282,17 @@ $string['notify_breach_desc']         = 'Sent when a learner has passed the dead
 $string['notify_warning_heading']     = 'Warning notifications';
 $string['notify_warning_desc']        = 'Sent when a learner is within the warning window and still below the threshold. Requires "Enable warning" to be set on the rule.';
 $string['notify_learner']             = 'Notify learner';
-$string['notify_staff']               = 'Notify staff';
+$string['notify_staff']               = 'Include in staff digest';
+$string['notify_staff_help']          = 'Ticking this includes learners matching this condition in the periodic staff digest email — it does not send anything instantly when a learner crosses the threshold. The digest\'s schedule (how often, and at what time) is set once for the whole site under Site administration → AsyncWatch → Staff Digest Schedule. This is different from "Notify learner" above, which sends immediately, once, to that specific learner.';
+
+// Additional staff recipients (per-rule, additive on top of the overseer list)
+$string['extra_recipients_header']        = 'Additional Staff Recipients';
+$string['extra_recipients_overseers']     = 'Already on this course\'s Notifications list';
+$string['extra_recipients_overseers_site'] = 'Already on the site-wide Cross-course Rules recipient list';
+$string['extra_recipients_no_overseers']  = 'Nobody is configured as an overseer yet — anyone added below will be the only recipient(s) for this rule\'s digest.';
+$string['extra_recipients_desc']          = 'Optionally add extra people who should also get this specific rule\'s digest. This is additive only — it never removes or replaces anyone above; they\'ll keep getting every rule\'s digest regardless of what\'s chosen here.';
+$string['extra_recipients']               = 'Add extra recipients for this rule';
+$string['extra_recipients_help']          = 'These people receive this rule\'s staff digest in addition to whoever\'s already listed above — nobody above can be removed from here. Useful when one rule needs a wider (or different) audience than the rest of the course/site without changing who sees everything.';
 $string['notify_learner_short']       = 'Learner';
 $string['notify_staff_short']         = 'Staff';
 $string['notify_breach_col']          = 'Behind notifications';

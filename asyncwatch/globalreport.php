@@ -143,8 +143,9 @@ echo $OUTPUT->header();
 echo $OUTPUT->heading(get_string('globalreport', 'local_asyncwatch'));
 
 $tabs = [
-    new tabobject('globalrules', new moodle_url('/local/asyncwatch/globalrules.php'), get_string('globalrules', 'local_asyncwatch')),
-    new tabobject('globalreport', new moodle_url('/local/asyncwatch/globalreport.php'), get_string('globalreport', 'local_asyncwatch')),
+    new tabobject('globalrules',         new moodle_url('/local/asyncwatch/globalrules.php'),         get_string('globalrules', 'local_asyncwatch')),
+    new tabobject('globalreport',        new moodle_url('/local/asyncwatch/globalreport.php'),        get_string('globalreport', 'local_asyncwatch')),
+    new tabobject('globalnotifications', new moodle_url('/local/asyncwatch/globalnotifications.php'), get_string('tab_globalnotifications', 'local_asyncwatch')),
 ];
 echo $OUTPUT->tabtree($tabs, 'globalreport');
 

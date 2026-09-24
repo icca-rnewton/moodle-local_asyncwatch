@@ -289,5 +289,37 @@
       </KEYS>
     </TABLE>
 
+    <TABLE NAME="asyncwatch_rule_extra_recipients" COMMENT="Additional staff recipients for a course-level rule's digest, on top of the course-wide list">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="ruleid" TYPE="int" LENGTH="10" NOTNULL="true"/>
+        <FIELD NAME="userid" TYPE="int" LENGTH="10" NOTNULL="true"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+        <KEY NAME="fk_rule" TYPE="foreign" FIELDS="ruleid" REFTABLE="asyncwatch_rules" REFFIELDS="id"/>
+        <KEY NAME="fk_user" TYPE="foreign" FIELDS="userid" REFTABLE="user" REFFIELDS="id"/>
+      </KEYS>
+      <INDEXES>
+        <INDEX NAME="uniq_ruleid_userid" UNIQUE="true" FIELDS="ruleid,userid"/>
+      </INDEXES>
+    </TABLE>
+
+    <TABLE NAME="asyncwatch_global_rule_extra_recipients" COMMENT="Additional staff recipients for a cross-course rule's digest, on top of the site-wide list">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="ruleid" TYPE="int" LENGTH="10" NOTNULL="true"/>
+        <FIELD NAME="userid" TYPE="int" LENGTH="10" NOTNULL="true"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+        <KEY NAME="fk_rule" TYPE="foreign" FIELDS="ruleid" REFTABLE="asyncwatch_global_rules" REFFIELDS="id"/>
+        <KEY NAME="fk_user" TYPE="foreign" FIELDS="userid" REFTABLE="user" REFFIELDS="id"/>
+      </KEYS>
+      <INDEXES>
+        <INDEX NAME="uniq_ruleid_userid" UNIQUE="true" FIELDS="ruleid,userid"/>
+      </INDEXES>
+    </TABLE>
+
   </TABLES>
 </XMLDB>
