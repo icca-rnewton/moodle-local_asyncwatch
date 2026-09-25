@@ -56,13 +56,6 @@ if (groups_get_course_groupmode($course) == SEPARATEGROUPS
     }
 }
 
-function aw_row_status(\stdClass $rule, int $done, int $now, int $eff_deadline, int $eff_warn): string {
-    if ($done >= $rule->parts_required) return 'completed';
-    if ($now >= $eff_deadline) return 'breach';
-    if ($eff_warn > 0 && $now >= ($eff_deadline - ($eff_warn * MINSECS))) return 'warning';
-    return 'ok';
-}
-
 // Bulk-loaded in one pass (3 queries total) rather than one call per
 // learner — on a 460-user course the per-user version was issuing
 // hundreds of extra queries for a single page load.
@@ -167,7 +160,7 @@ foreach ($all_rules as $rule) {
             $ugroups, $rule_to_overrides_by_group[$rule->id]  ?? [],
             $ucohorts, $rule_to_overrides_by_cohort[$rule->id] ?? []
         );
-        $status = aw_row_status($rule, $done, $now, $eff['deadline'], $eff['warn_hours']);
+        $status = helper::status_for_progress($rule, $done, $now, $eff['deadline'], $eff['warn_hours']);
 
         $all_rows[] = (object)[
             'rule'          => $rule,

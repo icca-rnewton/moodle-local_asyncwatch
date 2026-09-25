@@ -85,10 +85,22 @@ class global_rule_form extends \moodleform {
         // Early-warning window — identical UI/logic to rule_form.php.
         $mform->addElement('advcheckbox', 'warn_enabled', get_string('warn_enabled', 'local_asyncwatch'), '');
         $mform->setDefault('warn_enabled', 0);
+        $mform->addHelpButton('warn_enabled', 'warn_window', 'local_asyncwatch');
+
+        $mform->addElement('select', 'warn_mode', get_string('warn_mode', 'local_asyncwatch'), [
+            'time'  => get_string('warn_mode_time',  'local_asyncwatch'),
+            'parts' => get_string('warn_mode_parts', 'local_asyncwatch'),
+        ]);
+        $mform->setType('warn_mode', PARAM_ALPHA);
+        $mform->setDefault('warn_mode', 'time');
+        $mform->addHelpButton('warn_mode', 'warn_mode', 'local_asyncwatch');
+        $mform->hideIf('warn_mode', 'warn_enabled', 'notchecked');
 
         $mform->addElement('text', 'warn_value', '', ['size' => 4]);
         $mform->setType('warn_value', PARAM_INT);
         $mform->setDefault('warn_value', 0);
+        $mform->hideIf('warn_value', 'warn_enabled', 'notchecked');
+        $mform->hideIf('warn_value', 'warn_mode', 'neq', 'time');
 
         $unit_options = [
             'hours' => get_string('warn_unit_hours', 'local_asyncwatch'),
@@ -98,38 +110,88 @@ class global_rule_form extends \moodleform {
         $mform->addElement('select', 'warn_unit', get_string('warn_window', 'local_asyncwatch'), $unit_options);
         $mform->setType('warn_unit', PARAM_ALPHA);
         $mform->setDefault('warn_unit', 'hours');
+        $mform->hideIf('warn_unit', 'warn_enabled', 'notchecked');
+        $mform->hideIf('warn_unit', 'warn_mode', 'neq', 'time');
 
-        $mform->addElement('static', 'warn_js', '', "
-<script>
-(function() {
-    function toggleWarn() {
-        var cb   = document.getElementById('id_warn_enabled');
-        var val  = document.getElementById('id_warn_value');
-        var unit = document.getElementById('id_warn_unit');
-        if (!cb || !val || !unit) return;
-        var on = cb.checked;
-        val.disabled  = !on;
-        unit.disabled = !on;
-        val.style.opacity        = on ? '' : '0.4';
-        unit.style.opacity       = on ? '' : '0.4';
-        val.style.pointerEvents  = on ? '' : 'none';
-        unit.style.pointerEvents = on ? '' : 'none';
+        $mform->addElement('select', 'warn_parts_style',
+            get_string('warn_parts_style', 'local_asyncwatch'), [
+                'gap' => get_string('warn_parts_style_gap', 'local_asyncwatch'),
+                'min' => get_string('warn_parts_style_min', 'local_asyncwatch'),
+                'pct' => get_string('warn_parts_style_pct', 'local_asyncwatch'),
+            ]);
+        $mform->setType('warn_parts_style', PARAM_ALPHA);
+        $mform->setDefault('warn_parts_style', 'gap');
+        $mform->addHelpButton('warn_parts_style', 'warn_parts_style', 'local_asyncwatch');
+        $mform->hideIf('warn_parts_style', 'warn_enabled', 'notchecked');
+        $mform->hideIf('warn_parts_style', 'warn_mode', 'neq', 'parts');
+
+        $mform->addElement('text', 'warn_parts_value',
+            get_string('warn_parts_value', 'local_asyncwatch'), ['size' => 4]);
+        $mform->setType('warn_parts_value', PARAM_INT);
+        $mform->setDefault('warn_parts_value', 0);
+        $mform->hideIf('warn_parts_value', 'warn_enabled', 'notchecked');
+        $mform->hideIf('warn_parts_value', 'warn_mode', 'neq', 'parts');
+
+        $mform->addElement('static', 'warn_parts_preview', '',
+            '<div id="id_warn_parts_preview" class="text-muted small mt-1"></div>');
+        $mform->hideIf('warn_parts_preview', 'warn_enabled', 'notchecked');
+        $mform->hideIf('warn_parts_preview', 'warn_mode', 'neq', 'parts');
+
+        // Live preview — see rule_form.php's identical block for why this
+        // goes through js_amd_inline() and not a raw <script> tag.
+        global $PAGE;
+        $tpl       = json_encode(get_string('warn_parts_preview_template',    'local_asyncwatch'));
+        $needs_tpl = json_encode(get_string('warn_parts_preview_needs_parts', 'local_asyncwatch'));
+        $PAGE->requires->js_amd_inline("
+require(['jquery'], function() {
+    function computeGap(partsRequired, style, value) {
+        value = Math.max(0, value);
+        if (style === 'min') return Math.max(0, partsRequired - value);
+        if (style === 'pct') return Math.max(0, Math.ceil(partsRequired * value / 100));
+        return value;
+    }
+    function update() {
+        var partsEl   = document.getElementById('id_parts_required');
+        var styleEl   = document.getElementById('id_warn_parts_style');
+        var valueEl   = document.getElementById('id_warn_parts_value');
+        var previewEl = document.getElementById('id_warn_parts_preview');
+        if (!partsEl || !styleEl || !valueEl || !previewEl) return;
+        var partsRequired = parseInt(partsEl.value, 10) || 0;
+        var value         = parseInt(valueEl.value, 10) || 0;
+        if (partsRequired <= 0) {
+            previewEl.textContent = {$needs_tpl};
+            return;
+        }
+        var gap       = computeGap(partsRequired, styleEl.value, value);
+        var threshold = Math.max(0, partsRequired - gap);
+        previewEl.textContent = {$tpl}
+            .replace('%%REQUIRED%%', partsRequired)
+            .replace('%%GAP%%', gap)
+            .replace('%%THRESHOLD%%', threshold);
     }
     function init() {
-        var cb = document.getElementById('id_warn_enabled');
-        if (cb) { cb.addEventListener('change', toggleWarn); toggleWarn(); }
+        ['id_parts_required', 'id_warn_parts_style', 'id_warn_parts_value', 'id_warn_mode', 'id_warn_enabled']
+            .forEach(function(id) {
+                var el = document.getElementById(id);
+                if (el) el.addEventListener('change', update);
+            });
+        // parts_required is a plain text field here (not a select, unlike
+        // the course-level form), so also catch typing, not just change/blur.
+        var partsEl = document.getElementById('id_parts_required');
+        if (partsEl) partsEl.addEventListener('keyup', update);
+        update();
     }
     window.addEventListener('load', function() { init(); setTimeout(init, 500); });
-})();
-</script>
+});
         ");
 
         // Live total-parts hint, driven by the course autocomplete's
         // underlying <select multiple>, which Moodle keeps in sync and
-        // fires 'change' on as items are added/removed.
-        $mform->addElement('static', 'courses_total_js', '', '
-<script>
-(function() {
+        // fires 'change' on as items are added/removed. Same fix as the
+        // warning-preview block above — was a raw <script> tag, silently
+        // killed by Moodle's DOM rebuild, now goes through js_amd_inline().
+        $PAGE->requires->js_amd_inline('
+require(["jquery"], function() {
     var partcounts = ' . json_encode($partcounts_js) . ';
     function update() {
         var sel  = document.getElementById("id_courseids");
@@ -148,8 +210,7 @@ class global_rule_form extends \moodleform {
         if (sel) { sel.addEventListener("change", update); update(); }
     }
     window.addEventListener("load", function() { init(); setTimeout(init, 700); });
-})();
-</script>
+});
         ');
 
         // ── Notifications ────────────────────────────────────────────────
@@ -258,8 +319,14 @@ class global_rule_form extends \moodleform {
         }
 
         if (!empty($data['warn_enabled'])) {
-            if ((int)($data['warn_value'] ?? 0) < 1) {
-                $errors['warn_value'] = get_string('warn_value_required', 'local_asyncwatch');
+            if (($data['warn_mode'] ?? 'time') === 'parts') {
+                if ((int)($data['warn_parts_value'] ?? 0) < 1) {
+                    $errors['warn_parts_value'] = get_string('warn_parts_value_required', 'local_asyncwatch');
+                }
+            } else {
+                if ((int)($data['warn_value'] ?? 0) < 1) {
+                    $errors['warn_value'] = get_string('warn_value_required', 'local_asyncwatch');
+                }
             }
         }
 

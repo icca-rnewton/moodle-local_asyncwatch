@@ -56,10 +56,15 @@ class override_form extends \moodleform {
         $mform->setType('warn_unit', PARAM_ALPHA);
         $mform->setDefault('warn_unit', 'hours');
 
-        // Inline JS to grey out warn fields when disabled.
-        $mform->addElement('static', 'warn_js', '', "
-<script>
-(function() {
+        // Inline JS to grey out warn fields when disabled. Goes through
+        // js_amd_inline() rather than a raw <script> tag in a static
+        // element — the latter is silently killed by Moodle's own DOM
+        // rebuild after page load (confirmed broken in this exact form
+        // and fixed here; same bug also found and fixed in rule_form.php,
+        // global_rule_form.php, global_override_form.php, part_form.php).
+        global $PAGE;
+        $PAGE->requires->js_amd_inline("
+require(['jquery'], function() {
     function toggleWarn() {
         var cb   = document.getElementById('id_warn_enabled');
         var val  = document.getElementById('id_warn_value');
@@ -76,8 +81,7 @@ class override_form extends \moodleform {
         if (cb) { cb.addEventListener('change', toggleWarn); toggleWarn(); }
         setTimeout(toggleWarn, 500);
     });
-})();
-</script>
+});
         ");
 
         $this->add_action_buttons(true, get_string('savechanges'));

@@ -73,6 +73,21 @@ $string['warn_window']          = 'Warn learners';
 $string['warn_window_help']     = 'If enabled, a warning email is sent to learners who are still below the threshold within this window before the deadline. Set the number and choose hours, days, or weeks.';
 $string['warn_enabled']         = 'Enable warning';
 $string['warn_value_required']  = 'Please enter a warning window value of at least 1.';
+
+// Parts-based warning mode
+$string['warn_mode']                    = 'Warn based on';
+$string['warn_mode_help']               = 'Time before deadline (the original behaviour) warns learners a fixed amount of time before the deadline, regardless of how much they\'ve done. Parts remaining warns based on how much of the rule they still have left, regardless of how much time is left — useful when what matters is "how far behind" rather than "how soon". Only one basis is active per rule.';
+$string['warn_mode_time']               = 'Time before deadline';
+$string['warn_mode_parts']              = 'Parts remaining';
+$string['warn_parts_style']             = 'Enter as';
+$string['warn_parts_style_help']        = 'Three ways to say the same thing — pick whichever is easiest to think in. All three end up stored as the same underlying number (a gap), which is why the preview text below always shows what it actually means for this rule right now, regardless of which style you use.';
+$string['warn_parts_style_gap']         = 'Parts remaining when warning fires';
+$string['warn_parts_style_min']         = 'Minimum parts to stay on track';
+$string['warn_parts_style_pct']         = 'Percentage of parts remaining';
+$string['warn_parts_value']             = 'Value';
+$string['warn_parts_value_required']    = 'Please enter a value of at least 1.';
+$string['warn_parts_preview_template']  = 'This rule requires %%REQUIRED%% part(s) — a learner will be marked At Risk once %%GAP%% part(s) or fewer remain (that is, %%THRESHOLD%% or fewer done by the deadline).';
+$string['warn_parts_preview_needs_parts'] = 'Set "Parts required" above first to see what this threshold means for this rule.';
 $string['warn_unit_minutes']    = 'minutes before deadline';
 $string['warn_unit_hours']      = 'hours before deadline';
 $string['warn_unit_days']       = 'days before deadline';

@@ -61,7 +61,14 @@ class part_form extends \moodleform {
             }
         }
 
-        $mform->addElement('static', 'asyncwatch_js', '', self::render_js());
+        // Was $mform->addElement('static', ..., self::render_js()) with a
+        // <script> tag inside — silently killed by Moodle's own DOM
+        // rebuild after page load, exactly like the same bug found and
+        // fixed elsewhere in this plugin tonight (see the comment on
+        // override_form.php's equivalent fix). render_js() now returns
+        // raw JS (no <script> tags), passed straight to js_amd_inline().
+        global $PAGE;
+        $PAGE->requires->js_amd_inline(self::render_js());
 
         $this->add_action_buttons(true, get_string('savechanges'));
     }
@@ -250,8 +257,7 @@ class part_form extends \moodleform {
 
     private static function render_js(): string {
         return <<<'JS'
-<script>
-(function() {
+require(['jquery'], function() {
     function updateCount() {
         var n = document.querySelectorAll('.asyncwatch-cm-vis:checked').length;
         var el = document.getElementById('aw-selected-count');
@@ -319,7 +325,14 @@ class part_form extends \moodleform {
         updateCount();
     }
 
-    document.addEventListener('DOMContentLoaded', function() {
+    var initialised = false;
+    function init() {
+        if (initialised) return;
+        // Bail out quietly and let the setTimeout retry catch it if the
+        // chip markup isn't in the DOM yet on this pass.
+        if (!document.getElementById('aw-filter-section')) return;
+        initialised = true;
+
         // Live filters — no Apply button needed.
         ['aw-filter-section', 'aw-filter-type'].forEach(function(id) {
             var el = document.getElementById(id);
@@ -383,9 +396,10 @@ class part_form extends \moodleform {
         });
 
         updateCount();
-    });
-})();
-</script>
+    }
+
+    window.addEventListener('load', function() { init(); setTimeout(init, 500); });
+});
 JS;
     }
 

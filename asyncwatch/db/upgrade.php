@@ -579,5 +579,78 @@ function xmldb_local_asyncwatch_upgrade($oldversion) {
         upgrade_plugin_savepoint(true, 2026072613, 'local', 'asyncwatch');
     }
 
+    if ($oldversion < 2026072617) {
+
+        // Parts-based warning threshold — an alternative to the existing
+        // time-based (hours/days/weeks) warning window. Mutually exclusive
+        // per rule: warn_mode picks which one is active, and only the
+        // matching field (warn_hours for 'time', warn_parts_gap for
+        // 'parts') is actually read. Every existing rule defaults to
+        // 'time' with warn_parts_gap=0, so this is a pure additive change
+        // — nothing about current behaviour shifts on upgrade.
+
+        $table = new xmldb_table('asyncwatch_rules');
+        $field = new xmldb_field(
+            'warn_mode', XMLDB_TYPE_CHAR, '10', null,
+            XMLDB_NOTNULL, null, 'time', 'warn_hours'
+        );
+        if (!$dbman->field_exists($table, $field)) {
+            $dbman->add_field($table, $field);
+        }
+        $field = new xmldb_field(
+            'warn_parts_gap', XMLDB_TYPE_INTEGER, '4', null,
+            XMLDB_NOTNULL, null, '0', 'warn_mode'
+        );
+        if (!$dbman->field_exists($table, $field)) {
+            $dbman->add_field($table, $field);
+        }
+
+        $table = new xmldb_table('asyncwatch_global_rules');
+        $field = new xmldb_field(
+            'warn_mode', XMLDB_TYPE_CHAR, '10', null,
+            XMLDB_NOTNULL, null, 'time', 'warn_hours'
+        );
+        if (!$dbman->field_exists($table, $field)) {
+            $dbman->add_field($table, $field);
+        }
+        $field = new xmldb_field(
+            'warn_parts_gap', XMLDB_TYPE_INTEGER, '4', null,
+            XMLDB_NOTNULL, null, '0', 'warn_mode'
+        );
+        if (!$dbman->field_exists($table, $field)) {
+            $dbman->add_field($table, $field);
+        }
+
+        upgrade_plugin_savepoint(true, 2026072617, 'local', 'asyncwatch');
+    }
+
+    if ($oldversion < 2026072618) {
+
+        // Remembers which input style (gap / minimum / percentage) was
+        // last used to enter warn_parts_gap, purely so the edit form can
+        // show the same style back rather than always defaulting to raw
+        // gap terms. Never read by status_for_progress() itself.
+
+        $table = new xmldb_table('asyncwatch_rules');
+        $field = new xmldb_field(
+            'warn_parts_style', XMLDB_TYPE_CHAR, '10', null,
+            XMLDB_NOTNULL, null, 'gap', 'warn_parts_gap'
+        );
+        if (!$dbman->field_exists($table, $field)) {
+            $dbman->add_field($table, $field);
+        }
+
+        $table = new xmldb_table('asyncwatch_global_rules');
+        $field = new xmldb_field(
+            'warn_parts_style', XMLDB_TYPE_CHAR, '10', null,
+            XMLDB_NOTNULL, null, 'gap', 'warn_parts_gap'
+        );
+        if (!$dbman->field_exists($table, $field)) {
+            $dbman->add_field($table, $field);
+        }
+
+        upgrade_plugin_savepoint(true, 2026072618, 'local', 'asyncwatch');
+    }
+
     return true;
 }

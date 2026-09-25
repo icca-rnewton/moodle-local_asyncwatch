@@ -48,6 +48,9 @@
         <FIELD NAME="parts_required" TYPE="int" LENGTH="4" NOTNULL="true"/>
         <FIELD NAME="deadline" TYPE="int" LENGTH="10" NOTNULL="true"/>
         <FIELD NAME="warn_hours" TYPE="int" LENGTH="6" NOTNULL="false" DEFAULT="0"/>
+        <FIELD NAME="warn_mode" TYPE="char" LENGTH="10" NOTNULL="true" DEFAULT="time" COMMENT="'time' (default, uses warn_hours) or 'parts' (uses warn_parts_gap) — mutually exclusive, never both active"/>
+        <FIELD NAME="warn_parts_gap" TYPE="int" LENGTH="4" NOTNULL="true" DEFAULT="0" COMMENT="Only used when warn_mode='parts'. Warning fires when (parts_required - done) &lt;= this value. Not overridable per group/cohort in v1 — deadline overrides still apply, this gap does not."/>
+        <FIELD NAME="warn_parts_style" TYPE="char" LENGTH="10" NOTNULL="true" DEFAULT="gap" COMMENT="'gap', 'min', or 'pct' — remembers which input style was last used to enter warn_parts_gap, purely so the edit form can show the same style back. Never read by status_for_progress() — only warn_parts_gap itself drives the actual calculation."/>
         <FIELD NAME="enabled" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="1"/>
         <FIELD NAME="notify_learner_breach" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="0"/>
         <FIELD NAME="notify_staff_breach" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="0"/>
@@ -209,6 +212,9 @@
         <FIELD NAME="parts_required" TYPE="int" LENGTH="6" NOTNULL="true" COMMENT="Absolute count required across all selected courses combined"/>
         <FIELD NAME="deadline" TYPE="int" LENGTH="10" NOTNULL="true"/>
         <FIELD NAME="warn_hours" TYPE="int" LENGTH="6" NOTNULL="false" DEFAULT="0" COMMENT="Stored as minutes, per existing convention"/>
+        <FIELD NAME="warn_mode" TYPE="char" LENGTH="10" NOTNULL="true" DEFAULT="time" COMMENT="'time' (default, uses warn_hours) or 'parts' (uses warn_parts_gap) — mutually exclusive, never both active"/>
+        <FIELD NAME="warn_parts_gap" TYPE="int" LENGTH="4" NOTNULL="true" DEFAULT="0" COMMENT="Only used when warn_mode='parts'. Warning fires when (parts_required - done) &lt;= this value. Not overridable per cohort in v1 — deadline overrides still apply, this gap does not."/>
+        <FIELD NAME="warn_parts_style" TYPE="char" LENGTH="10" NOTNULL="true" DEFAULT="gap" COMMENT="'gap', 'min', or 'pct' — remembers which input style was last used to enter warn_parts_gap, purely so the edit form can show the same style back. Never read by status_for_progress() — only warn_parts_gap itself drives the actual calculation."/>
         <FIELD NAME="enabled" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="1"/>
         <FIELD NAME="notify_learner_breach" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="0"/>
         <FIELD NAME="notify_staff_breach" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="0"/>

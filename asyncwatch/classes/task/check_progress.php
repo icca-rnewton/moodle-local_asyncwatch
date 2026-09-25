@@ -234,19 +234,16 @@ class check_progress extends scheduled_task {
             );
 
             // Collect rows for the staff digest(s), if not already sent this rule.
-            if (!$breach_digest_sent && $want_breach_digest
-                    && $now >= $deadline && $done < $rule->parts_required) {
+            // Routed through the same shared status function everything
+            // else uses — see status_for_progress()'s docblock for why.
+            $row_status = helper::status_for_progress($rule, $done, $now, $deadline, $eff['warn_hours'] ?? 0);
+
+            if (!$breach_digest_sent && $want_breach_digest && $row_status === 'breach') {
                 $breach_rows[] = $this->build_csv_row($rule, $user, $done, $total_parts, 'breach', $progress['parts']);
             }
 
-            if (!$warning_digest_sent && $want_warning_digest) {
-                $warn_hours = $eff['warn_hours'] ?? (int)($rule->warn_hours ?? 0);
-                if ($warn_hours > 0) {
-                    $warn_threshold = $deadline - ($warn_hours * MINSECS);
-                    if ($now >= $warn_threshold && $now < $deadline && $done < $rule->parts_required) {
-                        $warning_rows[] = $this->build_csv_row($rule, $user, $done, $total_parts, 'warning', $progress['parts']);
-                    }
-                }
+            if (!$warning_digest_sent && $want_warning_digest && $row_status === 'warning') {
+                $warning_rows[] = $this->build_csv_row($rule, $user, $done, $total_parts, 'warning', $progress['parts']);
             }
         }
 
@@ -481,15 +478,17 @@ class check_progress extends scheduled_task {
                 $rule, $user, $done, $total, $now, $deadline, $warn_hours, $already_sent, $site_name, $courses_str
             );
 
-            if (!$breach_digest_sent && $want_breach_digest
-                    && $now >= $deadline && $done < $rule->parts_required) {
+            // Same shared status function as the profile-field-sync block
+            // just above, and everywhere else in this file — see
+            // status_for_progress()'s docblock for why this used to be
+            // hand-rolled separately here.
+            $row_status = helper::status_for_progress($rule, $done, $now, $deadline, $warn_hours);
+
+            if (!$breach_digest_sent && $want_breach_digest && $row_status === 'breach') {
                 $breach_rows[] = $this->build_global_csv_row($rule, $user, $done, $total, 'breach', $coursenames);
             }
-            if (!$warning_digest_sent && $want_warning_digest && $warn_hours > 0) {
-                $warn_threshold = $deadline - ($warn_hours * MINSECS);
-                if ($now >= $warn_threshold && $now < $deadline && $done < $rule->parts_required) {
-                    $warning_rows[] = $this->build_global_csv_row($rule, $user, $done, $total, 'warning', $coursenames);
-                }
+            if (!$warning_digest_sent && $want_warning_digest && $row_status === 'warning') {
+                $warning_rows[] = $this->build_global_csv_row($rule, $user, $done, $total, 'warning', $coursenames);
             }
         }
 
@@ -538,8 +537,7 @@ class check_progress extends scheduled_task {
         array &$already_sent, string $site_name, string $courses_str
     ): void {
         if (!$rule->notify_learner_breach) return;
-        if ($now < $deadline) return;
-        if ($done >= $rule->parts_required) return;
+        if (helper::status_for_progress($rule, $done, $now, $deadline, 0) !== 'breach') return;
 
         $key = $user->id . ':breach';
         if (!empty($already_sent[$key])) return;
@@ -566,11 +564,7 @@ class check_progress extends scheduled_task {
         array &$already_sent, string $site_name, string $courses_str
     ): void {
         if (!$rule->notify_learner_warning) return;
-        if ($warn_hours <= 0) return;
-
-        $warn_threshold = $deadline - ($warn_hours * MINSECS);
-        if ($now < $warn_threshold || $now >= $deadline) return;
-        if ($done >= $rule->parts_required) return;
+        if (helper::status_for_progress($rule, $done, $now, $deadline, $warn_hours) !== 'warning') return;
 
         $key = $user->id . ':warning';
         if (!empty($already_sent[$key])) return;
@@ -657,8 +651,7 @@ class check_progress extends scheduled_task {
         if (!$rule->notify_learner_breach || !$tpl || empty($tpl->learner_subject)) return;
 
         $deadline = $eff['deadline'] ?? $rule->deadline;
-        if ($now < $deadline) return;
-        if ($done >= $rule->parts_required) return;
+        if (helper::status_for_progress($rule, $done, $now, $deadline, $eff['warn_hours'] ?? 0) !== 'breach') return;
 
         $key = $user->id . ':breach';
         if (!empty($already_sent[$key])) return;
@@ -686,13 +679,8 @@ class check_progress extends scheduled_task {
     ): void {
         if (!$rule->notify_learner_warning || !$tpl || empty($tpl->learner_warning_subject)) return;
 
-        $deadline   = $eff['deadline']   ?? $rule->deadline;
-        $warn_hours = $eff['warn_hours'] ?? (int)($rule->warn_hours ?? 0);
-        if ($warn_hours <= 0) return;
-
-        $warn_threshold = $deadline - ($warn_hours * MINSECS);
-        if ($now < $warn_threshold || $now >= $deadline) return;
-        if ($done >= $rule->parts_required) return;
+        $deadline = $eff['deadline'] ?? $rule->deadline;
+        if (helper::status_for_progress($rule, $done, $now, $deadline, $eff['warn_hours'] ?? 0) !== 'warning') return;
 
         $key = $user->id . ':warning';
         if (!empty($already_sent[$key])) return;

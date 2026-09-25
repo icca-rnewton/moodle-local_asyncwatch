@@ -240,6 +240,10 @@ if ($tab === 'rules' && in_array($action, ['addrule', 'editrule'])) {
             'parts_required'        => (int)$formdata->parts_required,
             'deadline'              => (int)$formdata->deadline,
             'warn_hours'            => rule_form::warn_to_hours((array)$formdata),
+            'warn_mode'             => ($formdata->warn_mode ?? 'time') === 'parts' ? 'parts' : 'time',
+            'warn_parts_gap'        => rule_form::warn_to_parts_gap((array)$formdata, (int)$formdata->parts_required),
+            'warn_parts_style'      => in_array($formdata->warn_parts_style ?? 'gap', ['gap', 'min', 'pct'], true)
+                                        ? $formdata->warn_parts_style : 'gap',
             'enabled'               => (int)$formdata->enabled,
             'notify_learner_breach' => (int)($formdata->notify_learner_breach  ?? 0),
             'notify_staff_breach'   => (int)($formdata->notify_staff_breach    ?? 0),
@@ -268,7 +272,20 @@ if ($tab === 'rules' && in_array($action, ['addrule', 'editrule'])) {
         if ((int)$rule->courseid !== $courseid) {
             throw new \moodle_exception('invalidrecord', 'error');
         }
-        $warn_fields = rule_form::hours_to_warn_fields((int)$rule->warn_hours);
+        $warn_fields       = rule_form::hours_to_warn_fields((int)$rule->warn_hours);
+        $warn_parts_fields = rule_form::parts_gap_to_warn_fields(
+            (int)($rule->warn_parts_gap ?? 0), $rule->warn_parts_style ?? 'gap', (int)$rule->parts_required
+        );
+        $warn_mode = ($rule->warn_mode ?? 'time') === 'parts' ? 'parts' : 'time';
+        // hours_to_warn_fields() derives warn_enabled from warn_hours > 0,
+        // which is always 0 for a parts-mode rule (warn_to_hours() now
+        // zeroes it deliberately) — so for parts mode, derive it from the
+        // gap instead, or the checkbox would incorrectly show unchecked
+        // even when a parts-based warning genuinely is configured.
+        $warn_enabled = $warn_mode === 'parts'
+            ? (((int)($rule->warn_parts_gap ?? 0)) > 0 ? 1 : 0)
+            : $warn_fields['warn_enabled'];
+
         $rule_form->set_data([
             'ruleid'               => $id,
             'courseid'             => $courseid,
@@ -280,9 +297,12 @@ if ($tab === 'rules' && in_array($action, ['addrule', 'editrule'])) {
             'notify_staff_breach'    => $rule->notify_staff_breach    ?? 0,
             'notify_learner_warning' => $rule->notify_learner_warning ?? 0,
             'notify_staff_warning'   => $rule->notify_staff_warning   ?? 0,
-            'warn_enabled'           => $warn_fields['warn_enabled'],
+            'warn_enabled'           => $warn_enabled,
+            'warn_mode'              => $warn_mode,
             'warn_value'             => $warn_fields['warn_value'],
             'warn_unit'              => $warn_fields['warn_unit'],
+            'warn_parts_style'       => $warn_parts_fields['warn_parts_style'],
+            'warn_parts_value'       => $warn_parts_fields['warn_parts_value'],
             'profilefield'           => $rule->profilefield ?? '',
             'restrict_groupids'      => helper::get_rule_restrict_groupids($id),
             'restrict_cohortids'     => helper::get_rule_restrict_cohortids($id),

@@ -57,9 +57,11 @@ class global_override_form extends \moodleform {
         $mform->setType('warn_unit', PARAM_ALPHA);
         $mform->setDefault('warn_unit', 'hours');
 
-        $mform->addElement('static', 'warn_js', '', "
-<script>
-(function() {
+        // Same fix as override_form.php's identical block — see its
+        // comment for why this goes through js_amd_inline().
+        global $PAGE;
+        $PAGE->requires->js_amd_inline("
+require(['jquery'], function() {
     function toggleWarn() {
         var cb   = document.getElementById('id_warn_enabled');
         var val  = document.getElementById('id_warn_value');
@@ -76,8 +78,7 @@ class global_override_form extends \moodleform {
         if (cb) { cb.addEventListener('change', toggleWarn); toggleWarn(); }
         setTimeout(toggleWarn, 500);
     });
-})();
-</script>
+});
         ");
 
         $this->add_action_buttons(true, get_string('savechanges'));

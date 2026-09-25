@@ -1355,12 +1355,37 @@ class helper {
     /**
      * Determine the status label for a single rule/user progress row.
      */
+    /**
+     * The single source of truth for a rule+user's status: 'completed',
+     * 'breach', 'warning', or 'ok'. Used by the report pages, the cron
+     * task's notification triggers, staff digest row collection, and
+     * profile field sync — every one of those used to compute this
+     * independently (report.php had a byte-for-byte duplicate of this
+     * function; check_progress.php hand-rolled the same time-window math
+     * four separate times for the four learner notification triggers, plus
+     * twice more for staff digest row collection). Consolidated so a
+     * warning mode only ever needs implementing once.
+     *
+     * Two warning modes, mutually exclusive per rule (never both active):
+     * - 'time' (default): warn once within $eff_warn hours/minutes of the
+     *   deadline — the original behaviour, completely unchanged.
+     * - 'parts': warn once (parts_required - done) drops to
+     *   $rule->warn_parts_gap or fewer, regardless of time remaining. Not
+     *   affected by group/cohort overrides in v1 — only the deadline is
+     *   override-able; the parts gap is one rule-level number.
+     */
     public static function status_for_progress(
         \stdClass $rule, int $done, int $now, int $eff_deadline, int $eff_warn
     ): string {
         if ($done >= $rule->parts_required) return 'completed';
         if ($now >= $eff_deadline) return 'breach';
-        if ($eff_warn > 0 && $now >= ($eff_deadline - ($eff_warn * MINSECS))) return 'warning';
+
+        if (($rule->warn_mode ?? 'time') === 'parts') {
+            $gap = (int)($rule->warn_parts_gap ?? 0);
+            if ($gap > 0 && ($rule->parts_required - $done) <= $gap) return 'warning';
+        } else {
+            if ($eff_warn > 0 && $now >= ($eff_deadline - ($eff_warn * MINSECS))) return 'warning';
+        }
         return 'ok';
     }
 

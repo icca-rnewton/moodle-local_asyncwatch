@@ -64,11 +64,24 @@ class rule_form extends \moodleform {
         $mform->setDefault('warn_enabled', 0);
         $mform->addHelpButton('warn_enabled', 'warn_window', 'local_asyncwatch');
 
-        // warn_value and warn_unit are standalone (not in a group) to avoid
-        // Moodle stripping them during form cleaning.
+        // What the warning is based on — only meaningful once warning is
+        // switched on at all, so hidden until warn_enabled is ticked.
+        $mform->addElement('select', 'warn_mode', get_string('warn_mode', 'local_asyncwatch'), [
+            'time'  => get_string('warn_mode_time',  'local_asyncwatch'),
+            'parts' => get_string('warn_mode_parts', 'local_asyncwatch'),
+        ]);
+        $mform->setType('warn_mode', PARAM_ALPHA);
+        $mform->setDefault('warn_mode', 'time');
+        $mform->addHelpButton('warn_mode', 'warn_mode', 'local_asyncwatch');
+        $mform->hideIf('warn_mode', 'warn_enabled', 'notchecked');
+
+        // -- Time-based fields (unchanged behaviour; only the show/hide
+        //    mechanism changed — see below) --
         $mform->addElement('text', 'warn_value', '', ['size' => 4]);
         $mform->setType('warn_value', PARAM_INT);
         $mform->setDefault('warn_value', 0);
+        $mform->hideIf('warn_value', 'warn_enabled', 'notchecked');
+        $mform->hideIf('warn_value', 'warn_mode', 'neq', 'time');
 
         $unit_options = [
             'hours' => get_string('warn_unit_hours', 'local_asyncwatch'),
@@ -79,33 +92,81 @@ class rule_form extends \moodleform {
             get_string('warn_window', 'local_asyncwatch'), $unit_options);
         $mform->setType('warn_unit', PARAM_ALPHA);
         $mform->setDefault('warn_unit', 'hours');
+        $mform->hideIf('warn_unit', 'warn_enabled', 'notchecked');
+        $mform->hideIf('warn_unit', 'warn_mode', 'neq', 'time');
 
-        // JS: grey out warn_value + warn_unit when warn_enabled is unchecked.
-        // window.load is used (not DOMContentLoaded) so Moodle advcheckbox JS
-        // has already run before we attach our listener.
-        $mform->addElement('static', 'warn_js', '', "
-<script>
-(function() {
-    function toggleWarn() {
-        var cb   = document.getElementById('id_warn_enabled');
-        var val  = document.getElementById('id_warn_value');
-        var unit = document.getElementById('id_warn_unit');
-        if (!cb || !val || !unit) return;
-        var on = cb.checked;
-        val.disabled  = !on;
-        unit.disabled = !on;
-        val.style.opacity        = on ? '' : '0.4';
-        unit.style.opacity       = on ? '' : '0.4';
-        val.style.pointerEvents  = on ? '' : 'none';
-        unit.style.pointerEvents = on ? '' : 'none';
+        // -- Parts-based fields --
+        $mform->addElement('select', 'warn_parts_style',
+            get_string('warn_parts_style', 'local_asyncwatch'), [
+                'gap' => get_string('warn_parts_style_gap', 'local_asyncwatch'),
+                'min' => get_string('warn_parts_style_min', 'local_asyncwatch'),
+                'pct' => get_string('warn_parts_style_pct', 'local_asyncwatch'),
+            ]);
+        $mform->setType('warn_parts_style', PARAM_ALPHA);
+        $mform->setDefault('warn_parts_style', 'gap');
+        $mform->addHelpButton('warn_parts_style', 'warn_parts_style', 'local_asyncwatch');
+        $mform->hideIf('warn_parts_style', 'warn_enabled', 'notchecked');
+        $mform->hideIf('warn_parts_style', 'warn_mode', 'neq', 'parts');
+
+        $mform->addElement('text', 'warn_parts_value',
+            get_string('warn_parts_value', 'local_asyncwatch'), ['size' => 4]);
+        $mform->setType('warn_parts_value', PARAM_INT);
+        $mform->setDefault('warn_parts_value', 0);
+        $mform->hideIf('warn_parts_value', 'warn_enabled', 'notchecked');
+        $mform->hideIf('warn_parts_value', 'warn_mode', 'neq', 'parts');
+
+        $mform->addElement('static', 'warn_parts_preview', '',
+            '<div id="id_warn_parts_preview" class="text-muted small mt-1"></div>');
+        $mform->hideIf('warn_parts_preview', 'warn_enabled', 'notchecked');
+        $mform->hideIf('warn_parts_preview', 'warn_mode', 'neq', 'parts');
+
+        // Live preview text — genuinely computed, not a simple show/hide,
+        // so this is the one piece that needs real JS rather than hideIf().
+        // Deliberately going through $PAGE->requires->js_amd_inline() and
+        // NOT a raw <script> tag in a static element — the latter is
+        // silently killed by Moodle's own DOM rebuild after page load and
+        // was exactly the bug in this form's old warn_value/warn_unit
+        // toggle, which hideIf() above has now replaced properly.
+        global $PAGE;
+        $tpl        = json_encode(get_string('warn_parts_preview_template',    'local_asyncwatch'));
+        $needs_tpl  = json_encode(get_string('warn_parts_preview_needs_parts', 'local_asyncwatch'));
+        $PAGE->requires->js_amd_inline("
+require(['jquery'], function() {
+    function computeGap(partsRequired, style, value) {
+        value = Math.max(0, value);
+        if (style === 'min') return Math.max(0, partsRequired - value);
+        if (style === 'pct') return Math.max(0, Math.ceil(partsRequired * value / 100));
+        return value;
+    }
+    function update() {
+        var partsEl   = document.getElementById('id_parts_required');
+        var styleEl   = document.getElementById('id_warn_parts_style');
+        var valueEl   = document.getElementById('id_warn_parts_value');
+        var previewEl = document.getElementById('id_warn_parts_preview');
+        if (!partsEl || !styleEl || !valueEl || !previewEl) return;
+        var partsRequired = parseInt(partsEl.value, 10) || 0;
+        var value         = parseInt(valueEl.value, 10) || 0;
+        if (partsRequired <= 0) {
+            previewEl.textContent = {$needs_tpl};
+            return;
+        }
+        var gap       = computeGap(partsRequired, styleEl.value, value);
+        var threshold = Math.max(0, partsRequired - gap);
+        previewEl.textContent = {$tpl}
+            .replace('%%REQUIRED%%', partsRequired)
+            .replace('%%GAP%%', gap)
+            .replace('%%THRESHOLD%%', threshold);
     }
     function init() {
-        var cb = document.getElementById('id_warn_enabled');
-        if (cb) { cb.addEventListener('change', toggleWarn); toggleWarn(); }
+        ['id_parts_required', 'id_warn_parts_style', 'id_warn_parts_value', 'id_warn_mode', 'id_warn_enabled']
+            .forEach(function(id) {
+                var el = document.getElementById(id);
+                if (el) el.addEventListener('change', update);
+            });
+        update();
     }
     window.addEventListener('load', function() { init(); setTimeout(init, 500); });
-})();
-</script>
+});
         ");
 
         // ── Notifications ────────────────────────────────────────────────
@@ -227,8 +288,14 @@ class rule_form extends \moodleform {
         }
 
         if (!empty($data['warn_enabled'])) {
-            if ((int)($data['warn_value'] ?? 0) < 1) {
-                $errors['warn_value'] = get_string('warn_value_required', 'local_asyncwatch');
+            if (($data['warn_mode'] ?? 'time') === 'parts') {
+                if ((int)($data['warn_parts_value'] ?? 0) < 1) {
+                    $errors['warn_parts_value'] = get_string('warn_parts_value_required', 'local_asyncwatch');
+                }
+            } else {
+                if ((int)($data['warn_value'] ?? 0) < 1) {
+                    $errors['warn_value'] = get_string('warn_value_required', 'local_asyncwatch');
+                }
             }
         }
         return $errors;
@@ -238,7 +305,7 @@ class rule_form extends \moodleform {
      * Convert form fields → a single warn_hours integer for storage.
      */
     public static function warn_to_hours(array $formdata): int {
-        if (empty($formdata['warn_enabled'])) {
+        if (empty($formdata['warn_enabled']) || ($formdata['warn_mode'] ?? 'time') === 'parts') {
             return 0;
         }
         $val  = max(1, (int)($formdata['warn_value'] ?? 1));
@@ -280,5 +347,50 @@ class rule_form extends \moodleform {
      */
     public static function hours_to_warn_group(int $warn_hours): array {
         return self::hours_to_warn_fields($warn_hours)['warn_group'];
+    }
+
+    /**
+     * Convert form fields → a single normalized warn_parts_gap integer for
+     * storage, regardless of which input style (gap / minimum / percentage)
+     * was actually used. $parts_required is the rule's own required-parts
+     * count, needed to convert 'min' and 'pct' styles into a gap. Rounds
+     * UP for percentage, per the deliberate choice that a warning should
+     * err on triggering a little early rather than a little late.
+     */
+    public static function warn_to_parts_gap(array $formdata, int $parts_required): int {
+        if (empty($formdata['warn_enabled']) || ($formdata['warn_mode'] ?? 'time') !== 'parts') {
+            return 0;
+        }
+        $value = max(0, (int)($formdata['warn_parts_value'] ?? 0));
+        switch ($formdata['warn_parts_style'] ?? 'gap') {
+            case 'min':
+                return max(0, $parts_required - $value);
+            case 'pct':
+                return max(0, (int)ceil($parts_required * $value / 100));
+            default: // 'gap'
+                return $value;
+        }
+    }
+
+    /**
+     * Convert a stored warn_parts_gap + warn_parts_style back to form field
+     * values for editing — reconstructs the display value in whichever
+     * style was last used, so re-opening the form shows the same style and
+     * (up to percentage rounding) the same number the admin last entered,
+     * rather than always falling back to raw gap terms.
+     */
+    public static function parts_gap_to_warn_fields(int $gap, string $style, int $parts_required): array {
+        switch ($style) {
+            case 'min':
+                $value = max(0, $parts_required - $gap);
+                break;
+            case 'pct':
+                $value = $parts_required > 0 ? (int)round($gap / $parts_required * 100) : 0;
+                break;
+            default:
+                $style = 'gap';
+                $value = $gap;
+        }
+        return ['warn_parts_style' => $style, 'warn_parts_value' => $value];
     }
 }
