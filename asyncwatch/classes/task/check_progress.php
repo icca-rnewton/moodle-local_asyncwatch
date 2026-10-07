@@ -150,9 +150,12 @@ class check_progress extends scheduled_task {
         // ── Load template once ────────────────────────────────────────────────
         $needs_tpl = $rule->notify_learner_breach  || $rule->notify_staff_breach
                   || $rule->notify_learner_warning  || $rule->notify_staff_warning;
-        $tpl = $needs_tpl ? ($DB->get_record('asyncwatch_ntpl', ['courseid' => $courseid]) ?: null) : null;
-        if ($needs_tpl && $tpl === null) {
-            mtrace("  AsyncWatch: notifications enabled for rule {$rule->id} but no template found for course {$courseid} — skipping notifications.");
+        // A course that has never saved its Notifications page still sends,
+        // using the default wording that page displays — see
+        // helper::get_course_template().
+        $tpl = $needs_tpl ? helper::get_course_template($courseid) : null;
+        if ($tpl && empty($tpl->id)) {
+            mtrace("  AsyncWatch: rule {$rule->id} — course {$courseid} has no saved Notifications page, using the default learner wording and no course-wide staff recipients.");
         }
 
         // ── Bulk load: all user progress at once (3 queries regardless of cohort size) ──
@@ -303,7 +306,11 @@ class check_progress extends scheduled_task {
         // configured here.
         $extra_ids  = helper::get_rule_extra_recipient_ids((int)$rule->id);
         $user_ids   = array_values(array_unique(array_merge($user_ids, $extra_ids)));
-        if (empty($user_ids)) return;
+        if (empty($user_ids)) {
+            mtrace("  AsyncWatch: {$type} staff digest for rule {$rule->id} has " . count($rows)
+                . " affected student(s) but no staff recipients — add them on the course's Notifications page or the rule's own edit form.");
+            return;
+        }
 
         // Content is generated once and sent to every recipient, so there's
         // no single "the" recipient locale to use — falling back to the

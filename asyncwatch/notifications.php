@@ -31,28 +31,9 @@ $PAGE->set_heading($course->fullname);
 $PAGE->set_pagelayout('incourse');
 
 // ── Load / initialise template ────────────────────────────────────────────────
-$tpl = $DB->get_record('asyncwatch_ntpl', ['courseid' => $courseid]);
-if (!$tpl) {
-    $tpl = (object)[
-        'courseid'                => $courseid,
-        'learner_subject'         => get_string('tpl_learner_subject_default',        'local_asyncwatch'),
-        'learner_body'            => get_string('tpl_learner_body_default',            'local_asyncwatch'),
-        'learner_warning_subject' => get_string('tpl_learner_warning_subject_default', 'local_asyncwatch'),
-        'learner_warning_body'    => get_string('tpl_learner_warning_body_default',    'local_asyncwatch'),
-        'staff_recipients'        => json_encode(['userids' => []]),
-    ];
-}
-
-// Fall back to defaults for any empty template fields.
-$all_defaults = [
-    'learner_subject'         => get_string('tpl_learner_subject_default',        'local_asyncwatch'),
-    'learner_body'            => get_string('tpl_learner_body_default',            'local_asyncwatch'),
-    'learner_warning_subject' => get_string('tpl_learner_warning_subject_default', 'local_asyncwatch'),
-    'learner_warning_body'    => get_string('tpl_learner_warning_body_default',    'local_asyncwatch'),
-];
-foreach ($all_defaults as $f => $default) {
-    if (empty($tpl->$f)) $tpl->$f = $default;
-}
+// Shared with the scheduled task, so what this page shows is exactly what
+// gets sent — including for a course whose template has never been saved.
+$tpl = helper::get_course_template($courseid);
 
 $recipients       = json_decode($tpl->staff_recipients ?? '{}', true) ?: ['userids' => []];
 $selected_userids = array_map('intval', $recipients['userids'] ?? []);

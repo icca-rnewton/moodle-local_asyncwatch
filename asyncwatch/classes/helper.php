@@ -2157,6 +2157,44 @@ class helper {
     }
 
     /**
+     * A course's effective notification template — exactly what the
+     * course's Notifications page displays, and what the scheduled task
+     * sends. Used by both, so the two can't drift apart again.
+     *
+     * If the course has a saved template, that's returned with any empty
+     * learner wording filled in from the built-in defaults. If it has
+     * never been saved, an unsaved object (no id) holding the built-in
+     * default wording and an empty staff recipient list is returned —
+     * previously the task treated "never saved" as "send nothing at all",
+     * even though the page showed this same default wording.
+     *
+     * Staff digest wording is NOT part of this — that's a site-wide admin
+     * setting (see check_progress::send_staff_digest()).
+     */
+    public static function get_course_template(int $courseid): \stdClass {
+        global $DB;
+        $tpl = $DB->get_record('asyncwatch_ntpl', ['courseid' => $courseid]);
+        if (!$tpl) {
+            $tpl = (object)[
+                'courseid'         => $courseid,
+                'staff_recipients' => json_encode(['userids' => []]),
+            ];
+        }
+        $defaults = [
+            'learner_subject'         => 'tpl_learner_subject_default',
+            'learner_body'            => 'tpl_learner_body_default',
+            'learner_warning_subject' => 'tpl_learner_warning_subject_default',
+            'learner_warning_body'    => 'tpl_learner_warning_body_default',
+        ];
+        foreach ($defaults as $field => $stringid) {
+            if (empty($tpl->$field)) {
+                $tpl->$field = get_string($stringid, 'local_asyncwatch');
+            }
+        }
+        return $tpl;
+    }
+
+    /**
      * Userids on a course's Notifications-tab staff recipient list — the
      * "overseers" who see every rule in the course regardless of any
      * rule-specific additional recipients.
