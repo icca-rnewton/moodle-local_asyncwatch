@@ -652,5 +652,59 @@ function xmldb_local_asyncwatch_upgrade($oldversion) {
         upgrade_plugin_savepoint(true, 2026072618, 'local', 'asyncwatch');
     }
 
+    if ($oldversion < 2026072623) {
+
+        // Parts-mode status logic was the wrong way round before this
+        // version: it flagged learners within the gap of FINISHING as At
+        // risk before the deadline, instead of grading unfinished learners
+        // at the deadline (see helper::status_for_progress()). Any
+        // parts-mode 'warning' notification already recorded was sent on
+        // that wrong basis, and the one-per-rule dedup would stop the
+        // correct one ever going out — so clear them for parts-mode rules
+        // only. Time-mode records are untouched.
+        //
+        // Also clears 'warning_staff' digest markers (userid 0) for the
+        // same rules, so a corrected staff digest isn't held back until the
+        // next digest period by an incorrect one sent earlier this period.
+        //
+        // Plain deletes, safe to re-run if interrupted: a second pass just
+        // finds nothing left to remove.
+        //
+        // Repair first: on the live site the 2026072617 / 2026072618 steps
+        // above never ran (the recorded version had already passed them
+        // before they were deployed), so the three parts-mode columns were
+        // missing — and Moodle's update_record() silently drops fields with
+        // no matching column, so parts-mode settings were being discarded
+        // on save with no error. Re-add them here if absent, with exactly
+        // the same definitions as those steps. field_exists() makes this a
+        // no-op anywhere they already exist.
+        foreach (['asyncwatch_rules', 'asyncwatch_global_rules'] as $tablename) {
+            $table  = new xmldb_table($tablename);
+            $fields = [
+                new xmldb_field('warn_mode', XMLDB_TYPE_CHAR, '10', null,
+                    XMLDB_NOTNULL, null, 'time', 'warn_hours'),
+                new xmldb_field('warn_parts_gap', XMLDB_TYPE_INTEGER, '4', null,
+                    XMLDB_NOTNULL, null, '0', 'warn_mode'),
+                new xmldb_field('warn_parts_style', XMLDB_TYPE_CHAR, '10', null,
+                    XMLDB_NOTNULL, null, 'gap', 'warn_parts_gap'),
+            ];
+            foreach ($fields as $field) {
+                if (!$dbman->field_exists($table, $field)) {
+                    $dbman->add_field($table, $field);
+                }
+            }
+        }
+
+        $DB->delete_records_select('asyncwatch_notifications',
+            "type IN ('warning', 'warning_staff')
+             AND ruleid IN (SELECT id FROM {asyncwatch_rules} WHERE warn_mode = 'parts')");
+
+        $DB->delete_records_select('asyncwatch_global_notifications',
+            "type IN ('warning', 'warning_staff')
+             AND ruleid IN (SELECT id FROM {asyncwatch_global_rules} WHERE warn_mode = 'parts')");
+
+        upgrade_plugin_savepoint(true, 2026072623, 'local', 'asyncwatch');
+    }
+
     return true;
 }

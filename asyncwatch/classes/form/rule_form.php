@@ -130,6 +130,7 @@ class rule_form extends \moodleform {
         global $PAGE;
         $tpl        = json_encode(get_string('warn_parts_preview_template',    'local_asyncwatch'));
         $needs_tpl  = json_encode(get_string('warn_parts_preview_needs_parts', 'local_asyncwatch'));
+        $invalid_tpl = json_encode(get_string('warn_parts_preview_invalid', 'local_asyncwatch'));
         $PAGE->requires->js_amd_inline("
 require(['jquery'], function() {
     function computeGap(partsRequired, style, value) {
@@ -150,12 +151,19 @@ require(['jquery'], function() {
             previewEl.textContent = {$needs_tpl};
             return;
         }
-        var gap       = computeGap(partsRequired, styleEl.value, value);
-        var threshold = Math.max(0, partsRequired - gap);
+        var gap = computeGap(partsRequired, styleEl.value, value);
+        // Same range rule as the server-side validation(): the At Risk
+        // band must be at least 1 part and leave room for Behind below it.
+        if (gap < 1 || gap >= partsRequired) {
+            previewEl.textContent = {$invalid_tpl}
+                .split('%%REQUIRED%%').join(partsRequired)
+                .split('%%GAP%%').join(gap);
+            return;
+        }
+        var threshold = partsRequired - gap;
         previewEl.textContent = {$tpl}
-            .replace('%%REQUIRED%%', partsRequired)
-            .replace('%%GAP%%', gap)
-            .replace('%%THRESHOLD%%', threshold);
+            .split('%%REQUIRED%%').join(partsRequired)
+            .split('%%THRESHOLD%%').join(threshold);
     }
     function init() {
         ['id_parts_required', 'id_warn_parts_style', 'id_warn_parts_value', 'id_warn_mode', 'id_warn_enabled']
@@ -289,8 +297,20 @@ require(['jquery'], function() {
 
         if (!empty($data['warn_enabled'])) {
             if (($data['warn_mode'] ?? 'time') === 'parts') {
+                $required = (int)($data['parts_required'] ?? 0);
                 if ((int)($data['warn_parts_value'] ?? 0) < 1) {
                     $errors['warn_parts_value'] = get_string('warn_parts_value_required', 'local_asyncwatch');
+                } else if ($required > 0) {
+                    // The resulting At Risk band must be at least 1 part
+                    // and smaller than parts_required — otherwise nobody
+                    // could ever be At Risk (gap 0) or nobody could ever be
+                    // Behind (gap >= required). Same check the live preview
+                    // makes client-side.
+                    $gap = self::warn_to_parts_gap($data, $required);
+                    if ($gap < 1 || $gap >= $required) {
+                        $errors['warn_parts_value'] = get_string('warn_parts_gap_range', 'local_asyncwatch',
+                            (object)['gap' => $gap, 'required' => $required]);
+                    }
                 }
             } else {
                 if ((int)($data['warn_value'] ?? 0) < 1) {
@@ -354,8 +374,8 @@ require(['jquery'], function() {
      * storage, regardless of which input style (gap / minimum / percentage)
      * was actually used. $parts_required is the rule's own required-parts
      * count, needed to convert 'min' and 'pct' styles into a gap. Rounds
-     * UP for percentage, per the deliberate choice that a warning should
-     * err on triggering a little early rather than a little late.
+     * UP for percentage — a wider At Risk band, so a borderline learner
+     * lands in At Risk rather than Behind (the lenient direction).
      */
     public static function warn_to_parts_gap(array $formdata, int $parts_required): int {
         if (empty($formdata['warn_enabled']) || ($formdata['warn_mode'] ?? 'time') !== 'parts') {

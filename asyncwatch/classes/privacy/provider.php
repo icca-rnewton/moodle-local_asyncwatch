@@ -164,7 +164,7 @@ class provider implements
         foreach ($contextlist->get_contexts() as $context) {
 
             if ($context->contextlevel === CONTEXT_COURSE) {
-                $sql = "SELECT n.type, n.timesent, r.name AS rulename
+                $sql = "SELECT n.id, n.type, n.timesent, r.name AS rulename
                           FROM {asyncwatch_notifications} n
                           JOIN {asyncwatch_rules} r ON r.id = n.ruleid
                          WHERE n.userid = :userid AND r.courseid = :courseid
@@ -174,7 +174,7 @@ class provider implements
             }
 
             if ($context->contextlevel === CONTEXT_SYSTEM) {
-                $sql = "SELECT n.type, n.timesent, r.name AS rulename
+                $sql = "SELECT n.id, n.type, n.timesent, r.name AS rulename
                           FROM {asyncwatch_global_notifications} n
                           JOIN {asyncwatch_global_rules} r ON r.id = n.ruleid
                          WHERE n.userid = :userid

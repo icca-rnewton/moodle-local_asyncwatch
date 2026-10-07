@@ -1353,9 +1353,6 @@ class helper {
     // -------------------------------------------------------------------------
 
     /**
-     * Determine the status label for a single rule/user progress row.
-     */
-    /**
      * The single source of truth for a rule+user's status: 'completed',
      * 'breach', 'warning', or 'ok'. Used by the report pages, the cron
      * task's notification triggers, staff digest row collection, and
@@ -1367,25 +1364,40 @@ class helper {
      * warning mode only ever needs implementing once.
      *
      * Two warning modes, mutually exclusive per rule (never both active):
-     * - 'time' (default): warn once within $eff_warn hours/minutes of the
-     *   deadline — the original behaviour, completely unchanged.
-     * - 'parts': warn once (parts_required - done) drops to
-     *   $rule->warn_parts_gap or fewer, regardless of time remaining. Not
-     *   affected by group/cohort overrides in v1 — only the deadline is
-     *   override-able; the parts gap is one rule-level number.
+     * - 'time' (default): 'warning' within $eff_warn minutes before the
+     *   deadline, 'breach' once the deadline passes — the original
+     *   behaviour, completely unchanged.
+     * - 'parts': NOT an early warning. Everyone who hasn't finished is
+     *   'ok' (On track) right up until the deadline. At the deadline,
+     *   anyone still short is graded by how short: within
+     *   $rule->warn_parts_gap parts of parts_required → 'warning' (At
+     *   risk); further short than that → 'breach' (Behind). E.g. 10
+     *   required, gap 2: 8-9 done = At risk, 0-7 done = Behind.
+     *   The gap is one rule-level number, not affected by group/cohort
+     *   overrides in v1 — only the deadline itself is override-able.
+     *
+     * Parts mode was originally shipped with this the wrong way round
+     * (warning BEFORE the deadline for learners within the gap of
+     * finishing, i.e. the nearly-done learners, and Behind for everyone
+     * after) — fixed in 2026072623 following external review; see the
+     * matching upgrade step, which clears the incorrect warning records.
      */
     public static function status_for_progress(
         \stdClass $rule, int $done, int $now, int $eff_deadline, int $eff_warn
     ): string {
         if ($done >= $rule->parts_required) return 'completed';
-        if ($now >= $eff_deadline) return 'breach';
 
         if (($rule->warn_mode ?? 'time') === 'parts') {
+            // Before the deadline: everyone unfinished is simply On track.
+            if ($now < $eff_deadline) return 'ok';
+            // At/after the deadline: grade how far short they fell.
             $gap = (int)($rule->warn_parts_gap ?? 0);
             if ($gap > 0 && ($rule->parts_required - $done) <= $gap) return 'warning';
-        } else {
-            if ($eff_warn > 0 && $now >= ($eff_deadline - ($eff_warn * MINSECS))) return 'warning';
+            return 'breach';
         }
+
+        if ($now >= $eff_deadline) return 'breach';
+        if ($eff_warn > 0 && $now >= ($eff_deadline - ($eff_warn * MINSECS))) return 'warning';
         return 'ok';
     }
 
