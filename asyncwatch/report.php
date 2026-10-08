@@ -160,7 +160,7 @@ foreach ($all_rules as $rule) {
             $ugroups, $rule_to_overrides_by_group[$rule->id]  ?? [],
             $ucohorts, $rule_to_overrides_by_cohort[$rule->id] ?? []
         );
-        $status = helper::status_for_progress($rule, $done, $now, $eff['deadline'], $eff['warn_hours']);
+        $status = helper::status_for_progress($rule, $done, $now, $eff['deadline'], $eff['warn_hours'], $eff['warn_parts_gap']);
 
         $all_rows[] = (object)[
             'rule'          => $rule,

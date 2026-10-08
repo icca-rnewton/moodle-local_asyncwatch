@@ -725,5 +725,24 @@ function xmldb_local_asyncwatch_upgrade($oldversion) {
         upgrade_plugin_savepoint(true, 2026072625, 'local', 'asyncwatch');
     }
 
+    if ($oldversion < 2026072627) {
+
+        // Parts-based overrides: a group/cohort override on a parts-mode
+        // rule can now carry its own At Risk band. Nullable on purpose —
+        // NULL means "inherit the rule's band", so every existing override
+        // keeps behaving exactly as before without being edited.
+        foreach (['asyncwatch_rule_overrides', 'asyncwatch_rule_cohort_overrides',
+                  'asyncwatch_global_rule_overrides'] as $tablename) {
+            $table = new xmldb_table($tablename);
+            $field = new xmldb_field('warn_parts_gap', XMLDB_TYPE_INTEGER, '4', null,
+                null, null, null, 'warn_hours');
+            if (!$dbman->field_exists($table, $field)) {
+                $dbman->add_field($table, $field);
+            }
+        }
+
+        upgrade_plugin_savepoint(true, 2026072627, 'local', 'asyncwatch');
+    }
+
     return true;
 }

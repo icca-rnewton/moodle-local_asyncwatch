@@ -928,7 +928,7 @@ class helper {
      * with the latest deadline (most lenient) across both. Falls back to
      * the rule defaults.
      *
-     * @return array  ['deadline' => int, 'warn_hours' => int, 'override' => stdClass|null]
+     * @return array See effective_result().
      */
     public static function get_effective_deadline(
         \stdClass $rule, int $userid, int $courseid
@@ -979,19 +979,62 @@ class helper {
             }
         }
 
-        if ($best_override) {
+        return self::effective_result($rule, $best_override);
+    }
+
+    /**
+     * The one place an override resolution result is built, so every
+     * resolver (course cached/uncached, cross-course cached/uncached)
+     * returns exactly the same shape. The winning override — latest
+     * deadline, most lenient — brings its own warning settings with it;
+     * a rule's settings are never mixed with an override's.
+     *
+     * 'warn_parts_gap' is null when there's no override, or the override
+     * doesn't set its own band — callers pass it straight to
+     * status_for_progress(), which then uses the rule's own band.
+     *
+     * @return array ['deadline' => int, 'warn_hours' => int,
+     *                'warn_parts_gap' => int|null, 'override' => stdClass|null]
+     */
+    private static function effective_result(\stdClass $rule, ?\stdClass $best): array {
+        if ($best) {
+            $gap = $best->warn_parts_gap ?? null;
             return [
-                'deadline'   => (int)$best_override->deadline,
-                'warn_hours' => (int)$best_override->warn_hours,
-                'override'   => $best_override,
+                'deadline'       => (int)$best->deadline,
+                'warn_hours'     => (int)$best->warn_hours,
+                'warn_parts_gap' => ($gap === null || $gap === '') ? null : (int)$gap,
+                'override'       => $best,
             ];
         }
-
         return [
-            'deadline'   => (int)$rule->deadline,
-            'warn_hours' => (int)$rule->warn_hours,
-            'override'   => null,
+            'deadline'       => (int)$rule->deadline,
+            'warn_hours'     => (int)$rule->warn_hours,
+            'warn_parts_gap' => null,
+            'override'       => null,
         ];
+    }
+
+    /**
+     * Cross-course equivalent of effective_deadline_from_cache(): pick the
+     * best (latest-deadline) cohort override this user is in, from data
+     * already loaded. Replaces two separate hand-rolled copies of this
+     * loop (the scheduled task and the cross-course report).
+     *
+     * @param array $cohortids The user's cohort ids
+     * @param array $overrides_by_cohort cohortid => override record
+     */
+    public static function global_effective_from_cache(
+        \stdClass $rule, array $cohortids, array $overrides_by_cohort
+    ): array {
+        $best = null;
+        foreach ($cohortids as $cid) {
+            if (!isset($overrides_by_cohort[$cid])) continue;
+            $ov = $overrides_by_cohort[$cid];
+            if ($best === null || (int)$ov->deadline > (int)$best->deadline) {
+                $best = $ov;
+            }
+        }
+        return self::effective_result($rule, $best);
     }
 
     /**
@@ -1032,18 +1075,7 @@ class helper {
             }
         }
 
-        if ($best) {
-            return [
-                'deadline'   => (int)$best->deadline,
-                'warn_hours' => (int)$best->warn_hours,
-                'override'   => $best,
-            ];
-        }
-        return [
-            'deadline'   => (int)$rule->deadline,
-            'warn_hours' => (int)$rule->warn_hours,
-            'override'   => null,
-        ];
+        return self::effective_result($rule, $best);
     }
 
     // -------------------------------------------------------------------------
@@ -1353,6 +1385,72 @@ class helper {
     // -------------------------------------------------------------------------
 
     /**
+     * Column heading for an overrides table's warning column: "At risk
+     * from" for a parts-mode rule, the usual warning label otherwise.
+     * Values come from format_warn_display() below, which explains the
+     * two formats:
+     *
+     * Parts mode: "7 / 10" — the fewest parts done that still counts as
+     * At risk rather than Behind at the deadline, out of parts required.
+     * An override with no band of its own shows "As rule".
+     * Time mode: the warning window, e.g. "2 weeks", optionally followed by
+     * the date it opens.
+     */
+    public static function warn_column_label(\stdClass $rule): string {
+        return get_string(($rule->warn_mode ?? 'time') === 'parts' ? 'override_parts_col' : 'warn_window',
+            'local_asyncwatch');
+    }
+
+    /**
+     * Human-readable warning setting — see warn_column_label() for the
+     * matching column heading on the overrides pages.
+     *
+     * @param \stdClass $rule Course or cross-course rule
+     * @param \stdClass|null $override An override row, or null for the rule itself
+     * @param bool $with_date Time mode only: append the date the window opens
+     */
+    public static function format_warn_display(
+        \stdClass $rule, ?\stdClass $override = null, bool $with_date = false
+    ): string {
+        if (($rule->warn_mode ?? 'time') === 'parts') {
+            if ($override) {
+                $gap = $override->warn_parts_gap ?? null;
+                if ($gap === null || $gap === '') {
+                    return get_string('override_as_rule', 'local_asyncwatch');
+                }
+            } else {
+                $gap = $rule->warn_parts_gap ?? 0;
+            }
+            $gap = (int)$gap;
+            $required = (int)$rule->parts_required;
+            if ($gap < 1 || $gap >= $required) {
+                return '—';
+            }
+            return ($required - $gap) . ' / ' . $required;
+        }
+
+        $wm = (int)($override ? $override->warn_hours : $rule->warn_hours);
+        if ($wm <= 0) {
+            return '—';
+        }
+        if ($wm % (7 * 24 * 60) === 0) {
+            $label = get_string('numweeks', 'moodle', $wm / (7 * 24 * 60));
+        } else if ($wm % (24 * 60) === 0) {
+            $label = get_string('numdays', 'moodle', $wm / (24 * 60));
+        } else if ($wm % 60 === 0) {
+            $label = get_string('numhours', 'moodle', $wm / 60);
+        } else {
+            $label = get_string('numminutes', 'moodle', $wm);
+        }
+        if ($with_date) {
+            $deadline = (int)($override ? $override->deadline : $rule->deadline);
+            $label .= ' (' . userdate($deadline - $wm * MINSECS,
+                get_string('aw_datetimefmt', 'local_asyncwatch')) . ')';
+        }
+        return $label;
+    }
+
+    /**
      * The single source of truth for a rule+user's status: 'completed',
      * 'breach', 'warning', or 'ok'. Used by the report pages, the cron
      * task's notification triggers, staff digest row collection, and
@@ -1373,8 +1471,9 @@ class helper {
      *   $rule->warn_parts_gap parts of parts_required → 'warning' (At
      *   risk); further short than that → 'breach' (Behind). E.g. 10
      *   required, gap 2: 8-9 done = At risk, 0-7 done = Behind.
-     *   The gap is one rule-level number, not affected by group/cohort
-     *   overrides in v1 — only the deadline itself is override-able.
+     *   A group/cohort override can carry its own band, passed in as
+     *   $eff_parts_gap (from the effective_* resolvers' 'warn_parts_gap');
+     *   null means no override band, so the rule's own is used.
      *
      * Parts mode was originally shipped with this the wrong way round
      * (warning BEFORE the deadline for learners within the gap of
@@ -1383,7 +1482,8 @@ class helper {
      * matching upgrade step, which clears the incorrect warning records.
      */
     public static function status_for_progress(
-        \stdClass $rule, int $done, int $now, int $eff_deadline, int $eff_warn
+        \stdClass $rule, int $done, int $now, int $eff_deadline, int $eff_warn,
+        ?int $eff_parts_gap = null
     ): string {
         if ($done >= $rule->parts_required) return 'completed';
 
@@ -1391,7 +1491,8 @@ class helper {
             // Before the deadline: everyone unfinished is simply On track.
             if ($now < $eff_deadline) return 'ok';
             // At/after the deadline: grade how far short they fell.
-            $gap = (int)($rule->warn_parts_gap ?? 0);
+            // An override's own band if it has one, else the rule's.
+            $gap = $eff_parts_gap ?? (int)($rule->warn_parts_gap ?? 0);
             if ($gap > 0 && ($rule->parts_required - $done) <= $gap) return 'warning';
             return 'breach';
         }
@@ -2089,7 +2190,7 @@ class helper {
         global $DB;
         $overrides = self::get_global_rule_overrides((int)$rule->id);
         if (empty($overrides)) {
-            return ['deadline' => (int)$rule->deadline, 'warn_hours' => (int)$rule->warn_hours, 'override' => null];
+            return self::effective_result($rule, null);
         }
 
         $cohortids = array_map(function($o) { return (int)$o->cohortid; }, $overrides);
@@ -2106,10 +2207,7 @@ class helper {
             if (!in_array((int)$ov->cohortid, $member_cohortids)) continue;
             if ($best === null || (int)$ov->deadline > (int)$best->deadline) $best = $ov;
         }
-        if ($best) {
-            return ['deadline' => (int)$best->deadline, 'warn_hours' => (int)$best->warn_hours, 'override' => $best];
-        }
-        return ['deadline' => (int)$rule->deadline, 'warn_hours' => (int)$rule->warn_hours, 'override' => null];
+        return self::effective_result($rule, $best);
     }
 
     /**

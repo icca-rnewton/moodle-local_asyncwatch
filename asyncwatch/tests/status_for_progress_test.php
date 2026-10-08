@@ -85,6 +85,21 @@ final class status_for_progress_test extends \basic_testcase {
     }
 
     /**
+     * An override's own band replaces the rule's; null inherits it.
+     */
+    public function test_parts_mode_override_band(): void {
+        $rule  = $this->rule('parts', 3); // Rule: At risk from 7.
+        $after = self::DEADLINE + 100;
+        // Rule band: 8 done is At risk.
+        $this->assertSame('warning', helper::status_for_progress($rule, 8, $after, self::DEADLINE, 0, null));
+        // Override band of 1 (At risk from 9): 8 done is Behind, 9 is At risk.
+        $this->assertSame('breach', helper::status_for_progress($rule, 8, $after, self::DEADLINE, 0, 1));
+        $this->assertSame('warning', helper::status_for_progress($rule, 9, $after, self::DEADLINE, 0, 1));
+        // Override band of 5 (At risk from 5): 5 done is At risk.
+        $this->assertSame('warning', helper::status_for_progress($rule, 5, $after, self::DEADLINE, 0, 5));
+    }
+
+    /**
      * Time mode must be unchanged by the parts-mode fix.
      */
     public function test_time_mode_unchanged(): void {

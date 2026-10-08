@@ -41,45 +41,9 @@ class global_override_form extends \moodleform {
         $mform->addRule('deadline', null, 'required', null, 'client');
 
         // Early warning — same pattern as override_form / rule_form.
-        $mform->addElement('advcheckbox', 'warn_enabled', get_string('warn_enabled', 'local_asyncwatch'), '');
-        $mform->setDefault('warn_enabled', 0);
-
-        $mform->addElement('text', 'warn_value', '', ['size' => 4]);
-        $mform->setType('warn_value', PARAM_INT);
-        $mform->setDefault('warn_value', 0);
-
-        $unit_options = [
-            'hours' => get_string('warn_unit_hours', 'local_asyncwatch'),
-            'days'  => get_string('warn_unit_days',  'local_asyncwatch'),
-            'weeks' => get_string('warn_unit_weeks', 'local_asyncwatch'),
-        ];
-        $mform->addElement('select', 'warn_unit', get_string('warn_window', 'local_asyncwatch'), $unit_options);
-        $mform->setType('warn_unit', PARAM_ALPHA);
-        $mform->setDefault('warn_unit', 'hours');
-
-        // Same fix as override_form.php's identical block — see its
-        // comment for why this goes through js_amd_inline().
-        global $PAGE;
-        $PAGE->requires->js_amd_inline("
-require(['jquery'], function() {
-    function toggleWarn() {
-        var cb   = document.getElementById('id_warn_enabled');
-        var val  = document.getElementById('id_warn_value');
-        var unit = document.getElementById('id_warn_unit');
-        if (!cb || !val || !unit) return;
-        var on = cb.checked;
-        val.disabled  = !on; val.style.opacity  = on ? '' : '0.4';
-        unit.disabled = !on; unit.style.opacity = on ? '' : '0.4';
-        val.style.pointerEvents  = on ? '' : 'none';
-        unit.style.pointerEvents = on ? '' : 'none';
-    }
-    window.addEventListener('load', function() {
-        var cb = document.getElementById('id_warn_enabled');
-        if (cb) { cb.addEventListener('change', toggleWarn); toggleWarn(); }
-        setTimeout(toggleWarn, 500);
-    });
-});
-        ");
+        // Warning fields: time window, or for a parts-mode rule the At
+        // Risk band — see override_form::add_warning_elements().
+        \local_asyncwatch\form\override_form::add_warning_elements($mform, $this->_customdata['rule'] ?? null);
 
         $this->add_action_buttons(true, get_string('savechanges'));
     }
@@ -87,9 +51,8 @@ require(['jquery'], function() {
     public function validation($data, $files): array {
         global $DB;
         $errors = parent::validation($data, $files);
-        if (!empty($data['warn_enabled']) && (int)($data['warn_value'] ?? 0) < 1) {
-            $errors['warn_value'] = get_string('warn_value_required', 'local_asyncwatch');
-        }
+        $errors = array_merge($errors,
+            \local_asyncwatch\form\override_form::validate_warning($data, $this->_customdata['rule'] ?? null));
 
         // This form is shared between two different tables — cross-course
         // rule cohort overrides (globaloverrides.php) and per-course

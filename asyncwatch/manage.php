@@ -458,17 +458,9 @@ if ($tab === 'rules') {
                               . ' / '
                               . ($rule->notify_staff_warning   ? get_string('notify_staff_short',   'local_asyncwatch') : '—');
 
-                // Display warn value in human-readable form (stored as minutes).
-                $warn_display = '—';
-                if ($rule->warn_hours > 0) {
-                    $wm = (int)$rule->warn_hours;
-                    if ($wm % (7 * 24 * 60) === 0)      $warn_label = ($wm / (7*24*60)) . ' week(s)';
-                    elseif ($wm % (24 * 60) === 0)       $warn_label = ($wm / (24*60))   . ' day(s)';
-                    elseif ($wm % 60 === 0)              $warn_label = ($wm / 60)         . ' hour(s)';
-                    else                                 $warn_label = $wm                . ' minute(s)';
-                    $warn_start   = $rule->deadline - ($wm * MINSECS);
-                    $warn_display = $warn_label . ' (' . userdate($warn_start, get_string('aw_datetimefmt', 'local_asyncwatch')) . ')';
-                }
+                // Shared formatter: time window + the date it opens, or for a
+                // parts-mode rule the At Risk threshold, e.g. "7 / 10".
+                $warn_display = helper::format_warn_display($rule, null, true);
 
                 $restrict_groupids  = helper::get_rule_restrict_groupids((int)$rule->id);
                 $restrict_cohortids = helper::get_rule_restrict_cohortids((int)$rule->id);

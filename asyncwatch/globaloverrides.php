@@ -27,6 +27,7 @@ $action = optional_param('action', '', PARAM_ALPHA);
 $id     = optional_param('id',     0,  PARAM_INT);
 
 $rule    = helper::get_global_rule($ruleid);
+$is_parts = ($rule->warn_mode ?? 'time') === 'parts';
 $context = context_system::instance();
 
 require_login();
@@ -82,6 +83,7 @@ if (in_array($action, ['addoverride', 'editoverride'])) {
     $form = new global_override_form($formurl->out(false), [
         'cohorts' => $cohort_options,
         'ruleid'  => $ruleid,
+        'rule'    => $rule,
         'table'   => 'asyncwatch_global_rule_overrides',
     ]);
 
@@ -100,7 +102,10 @@ if (in_array($action, ['addoverride', 'editoverride'])) {
             'ruleid'     => $ruleid,
             'cohortid'   => (int)$data->cohortid,
             'deadline'   => (int)$data->deadline,
-            'warn_hours' => override_form::warn_to_minutes((array)$data),
+            // Mode-aware, like the rule form: only the active mode's value
+            // is stored, the other cleared, so nothing stale lingers.
+            'warn_hours'     => $is_parts ? 0 : override_form::warn_to_minutes((array)$data),
+            'warn_parts_gap' => $is_parts ? override_form::parts_override_to_gap((array)$data, $rule) : null,
         ];
         if (!empty($data->overrideid)) {
             $record->id = (int)$data->overrideid;
@@ -115,7 +120,9 @@ if (in_array($action, ['addoverride', 'editoverride'])) {
         if ((int)$ov->ruleid !== $ruleid) {
             throw new \moodle_exception('invalidrecord', 'error');
         }
-        $warn = override_form::minutes_to_fields((int)$ov->warn_hours);
+        $warn = $is_parts
+            ? override_form::gap_to_parts_override_fields($ov->warn_parts_gap ?? null, $rule)
+            : override_form::minutes_to_fields((int)$ov->warn_hours);
         $form->set_data(array_merge([
             'overrideid' => $id,
             'ruleid'     => $ruleid,
@@ -132,17 +139,10 @@ echo html_writer::link($rules_url, '← ' . get_string('globalrules', 'local_asy
     ['class' => 'btn btn-link mb-3 pl-0']);
 
 // Default deadline info box.
-$wm = (int)$rule->warn_hours;
-$warn_disp = '—';
-if ($wm > 0) {
-    if ($wm % (7*24*60) === 0)      $warn_disp = ($wm/(7*24*60)) . ' ' . get_string('weeks');
-    elseif ($wm % (24*60) === 0)    $warn_disp = ($wm/(24*60))   . ' ' . get_string('days');
-    elseif ($wm % 60 === 0)         $warn_disp = ($wm/60)         . ' ' . get_string('hours');
-    else                            $warn_disp = $wm               . ' ' . get_string('minutes');
-}
+$warn_disp = helper::format_warn_display($rule);
 echo '<div class="alert alert-info mb-4">';
 echo '<strong>' . get_string('override_default_deadline', 'local_asyncwatch') . ':</strong> ' . userdate($rule->deadline);
-echo ' &nbsp;|&nbsp; <strong>' . get_string('warn_window', 'local_asyncwatch') . ':</strong> ' . $warn_disp;
+echo ' &nbsp;|&nbsp; <strong>' . helper::warn_column_label($rule) . ':</strong> ' . $warn_disp;
 echo '<br><small class="text-muted">' . get_string('override_default_desc_cohort', 'local_asyncwatch') . '</small>';
 if (empty($rule_cohortids)) {
     echo '<br><small class="text-muted">' . get_string('globalrule_override_anycohort_note', 'local_asyncwatch') . '</small>';
@@ -165,19 +165,14 @@ if ($form) {
         $table->head = [
             get_string('globalrule_cohorts', 'local_asyncwatch'),
             get_string('deadline',    'local_asyncwatch'),
-            get_string('warn_window', 'local_asyncwatch'),
+            helper::warn_column_label($rule),
             get_string('actions'),
         ];
 
         foreach ($overrides as $ov) {
             $cohort_name = $all_cohort_names[(int)$ov->cohortid] ?? get_string('deletedcohort', 'local_asyncwatch');
 
-            $wm = (int)$ov->warn_hours;
-            if ($wm <= 0)                    $wdisp = '—';
-            elseif ($wm % (7*24*60) === 0)   $wdisp = ($wm/(7*24*60)) . ' ' . get_string('weeks');
-            elseif ($wm % (24*60) === 0)     $wdisp = ($wm/(24*60))   . ' ' . get_string('days');
-            elseif ($wm % 60 === 0)          $wdisp = ($wm/60)         . ' ' . get_string('hours');
-            else                             $wdisp = $wm               . ' ' . get_string('minutes');
+            $wdisp = helper::format_warn_display($rule, $ov);
 
             $edit_url   = new moodle_url($pageurl, ['action' => 'editoverride',   'id' => $ov->id]);
             $delete_url = new moodle_url($pageurl, ['action' => 'deleteoverride', 'id' => $ov->id, 'sesskey' => sesskey()]);

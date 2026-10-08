@@ -84,19 +84,13 @@ foreach ($all_rules as $rule) {
         $done  = $prog['completed'];
         $total = $prog['total'];
 
-        // Effective deadline: best (latest) cohort override this user is in.
-        $best = null;
-        foreach ($user_cohortids[$uid] ?? [] as $cid) {
-            if (!isset($overrides_by_cohort[$cid])) continue;
-            $ov = $overrides_by_cohort[$cid];
-            if ($best === null || (int)$ov->deadline > (int)$best->deadline) {
-                $best = $ov;
-            }
-        }
-        $eff_deadline = $best ? (int)$best->deadline   : (int)$rule->deadline;
-        $eff_warn     = $best ? (int)$best->warn_hours : (int)$rule->warn_hours;
+        // Effective deadline/warning: best (latest) cohort override this
+        // user is in — same shared resolver as the scheduled task.
+        $eff          = helper::global_effective_from_cache($rule, $user_cohortids[$uid] ?? [], $overrides_by_cohort);
+        $eff_deadline = $eff['deadline'];
+        $eff_warn     = $eff['warn_hours'];
 
-        $status = helper::status_for_progress($rule, $done, $now, $eff_deadline, $eff_warn);
+        $status = helper::status_for_progress($rule, $done, $now, $eff_deadline, $eff_warn, $eff['warn_parts_gap']);
 
         $all_rows[] = (object)[
             'rule'         => $rule,
@@ -106,7 +100,7 @@ foreach ($all_rules as $rule) {
             'status'       => $status,
             'lastaccess'   => $user->lastaccess,
             'eff_deadline' => $eff_deadline,
-            'has_override' => $best !== null,
+            'has_override' => $eff['override'] !== null,
             'coursenames'  => $coursenames,
         ];
     }
