@@ -244,12 +244,9 @@ require(['jquery'], function() {
                 ['class' => 'text-muted small mb-2']
             )
         );
-        $field_options = ['' => get_string('profilefield_none', 'local_asyncwatch')]
-            + ($this->_customdata['profile_field_options'] ?? []);
-        $mform->addElement('select', 'profilefield',
-            get_string('profilefield', 'local_asyncwatch'), $field_options);
-        $mform->setType('profilefield', PARAM_ALPHANUMEXT);
-        $mform->addHelpButton('profilefield', 'profilefield', 'local_asyncwatch');
+        // Status field, parts-done field, and the "already used by" notices —
+        // shared with the cross-course form, see rule_form::add_profile_field_elements().
+        \local_asyncwatch\form\rule_form::add_profile_field_elements($mform, $this->_customdata);
 
         // ── Restrictions ─────────────────────────────────────────────────────
         $mform->addElement('header', 'restrict_header',
@@ -274,6 +271,62 @@ require(['jquery'], function() {
         $mform->setType('restrict_cohortids', PARAM_INT);
 
         $this->add_action_buttons(true, get_string('savechanges'));
+    }
+
+    /**
+     * The Profile Field Sync section's fields, shared by the course and
+     * cross-course rule forms: the status field, the parts-done field, and
+     * an informational "already used by…" notice under each that updates
+     * as the selection changes. Sharing a field between rules is allowed —
+     * it can be deliberate — so the notice informs, it never blocks.
+     *
+     * Customdata used: profile_field_options, parts_field_options,
+     * field_usage (shortname => HTML-safe notice, see
+     * helper::get_profile_field_usage()).
+     */
+    public static function add_profile_field_elements(\MoodleQuickForm $mform, array $customdata): void {
+        global $PAGE;
+
+        $status_options = ['' => get_string('profilefield_none', 'local_asyncwatch')]
+            + ($customdata['profile_field_options'] ?? []);
+        $mform->addElement('select', 'profilefield',
+            get_string('profilefield', 'local_asyncwatch'), $status_options);
+        $mform->setType('profilefield', PARAM_ALPHANUMEXT);
+        $mform->addHelpButton('profilefield', 'profilefield', 'local_asyncwatch');
+        $mform->addElement('static', 'profilefield_usage', '',
+            \html_writer::div('', 'alert alert-info mb-0', ['id' => 'aw_usage_profilefield', 'style' => 'display:none']));
+
+        $parts_options = ['' => get_string('partsfield_none', 'local_asyncwatch')]
+            + ($customdata['parts_field_options'] ?? []);
+        $mform->addElement('select', 'partsfield',
+            get_string('partsfield', 'local_asyncwatch'), $parts_options);
+        $mform->setType('partsfield', PARAM_ALPHANUMEXT);
+        $mform->addHelpButton('partsfield', 'partsfield', 'local_asyncwatch');
+        $mform->addElement('static', 'partsfield_usage', '',
+            \html_writer::div('', 'alert alert-info mb-0', ['id' => 'aw_usage_partsfield', 'style' => 'display:none']));
+
+        // js_amd_inline, not a <script> in a static element — see the
+        // warning-preview comment in definition() for why.
+        $usage = json_encode((object)($customdata['field_usage'] ?? []));
+        $PAGE->requires->js_amd_inline("
+require([], function() {
+    var usage = {$usage};
+    function bind(name) {
+        var sel = document.getElementById('id_' + name);
+        var box = document.getElementById('aw_usage_' + name);
+        if (!sel || !box) return;
+        function update() {
+            var msg = sel.value && usage[sel.value];
+            box.innerHTML = msg || '';
+            box.style.display = msg ? '' : 'none';
+        }
+        sel.addEventListener('change', update);
+        update();
+    }
+    bind('profilefield');
+    bind('partsfield');
+});
+");
     }
 
     public function validation($data, $files): array {
@@ -318,6 +371,12 @@ require(['jquery'], function() {
                 }
             }
         }
+        // The status field and the parts-done field can't be the same field
+        // on one rule — they'd overwrite each other on every run.
+        if (!empty($data['partsfield']) && ($data['partsfield'] === ($data['profilefield'] ?? ''))) {
+            $errors['partsfield'] = get_string('partsfield_same_as_status', 'local_asyncwatch');
+        }
+
         return $errors;
     }
 

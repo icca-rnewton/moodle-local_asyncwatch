@@ -285,12 +285,9 @@ require(["jquery"], function() {
                 ['class' => 'text-muted small mb-2']
             )
         );
-        $field_options = ['' => get_string('profilefield_none', 'local_asyncwatch')]
-            + ($this->_customdata['profile_field_options'] ?? []);
-        $mform->addElement('select', 'profilefield',
-            get_string('profilefield', 'local_asyncwatch'), $field_options);
-        $mform->setType('profilefield', PARAM_ALPHANUMEXT);
-        $mform->addHelpButton('profilefield', 'profilefield', 'local_asyncwatch');
+        // Status field, parts-done field, and the "already used by" notices —
+        // shared with the cross-course form, see rule_form::add_profile_field_elements().
+        \local_asyncwatch\form\rule_form::add_profile_field_elements($mform, $this->_customdata);
 
         // ── Cohort targeting ─────────────────────────────────────────────
         $mform->addElement('header', 'cohorts_header', get_string('globalrule_cohorts', 'local_asyncwatch'));
@@ -348,6 +345,12 @@ require(["jquery"], function() {
                     $errors['warn_value'] = get_string('warn_value_required', 'local_asyncwatch');
                 }
             }
+        }
+
+        // The status field and the parts-done field can't be the same field
+        // on one rule — they'd overwrite each other on every run.
+        if (!empty($data['partsfield']) && ($data['partsfield'] === ($data['profilefield'] ?? ''))) {
+            $errors['partsfield'] = get_string('partsfield_same_as_status', 'local_asyncwatch');
         }
 
         return $errors;

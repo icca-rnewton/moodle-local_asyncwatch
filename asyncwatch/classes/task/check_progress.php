@@ -179,6 +179,10 @@ class check_progress extends scheduled_task {
             }
         }
 
+        // ── Bulk load: parts-done field sync state, if this rule targets one ──
+        list($parts_fieldid, $parts_data) = $this->load_parts_field(
+            $rule, "rule {$rule->id}", array_keys($students));
+
         // ── Staff digest state ──────────────────────────────────────────────────
         // Staff notifications are one "report" email per rule per PERIOD
         // (with a CSV of affected students attached) rather than one email
@@ -224,6 +228,12 @@ class check_progress extends scheduled_task {
                     helper::write_profile_field_value($userid, $profile_fieldid, $label, $existing);
                     mtrace("  AsyncWatch: profile field '{$rule->profilefield}' → \"{$label}\" for user {$userid} (rule {$rule->id})");
                 }
+            }
+
+            // Parts-done field sync — same write-only-on-change rule.
+            if ($parts_fieldid) {
+                $this->sync_parts_field($parts_fieldid, $parts_data, $userid, $done,
+                    $rule->partsfield, "rule {$rule->id}");
             }
 
             // Learner emails stay individual and personalised.
@@ -274,6 +284,49 @@ class check_progress extends scheduled_task {
             'parts'      => $partsmap,
             'lastaccess' => $user->lastaccess ?? 0,
         ];
+    }
+
+    /**
+     * Resolve and bulk-load a rule's parts-done profile field, shared by
+     * course and cross-course rules. Returns [fieldid|null, data map].
+     * A missing field, or one that isn't a text field, is logged and
+     * skipped — never written to.
+     *
+     * @param \stdClass $rule Course or cross-course rule record
+     * @param string $label For log lines, e.g. "rule 12" / "global rule 3"
+     * @param array $userids Learners to preload existing values for
+     * @return array [?int $fieldid, array $data]
+     */
+    private function load_parts_field(\stdClass $rule, string $label, array $userids): array {
+        if (empty($rule->partsfield)) {
+            return [null, []];
+        }
+        $fieldid = helper::get_profile_field_id($rule->partsfield);
+        if (!$fieldid) {
+            mtrace("  AsyncWatch: {$label} targets parts-done profile field '{$rule->partsfield}' which no longer exists — skipping parts sync.");
+            return [null, []];
+        }
+        $meta = helper::get_profile_field_meta($fieldid);
+        if (!$meta || !helper::profile_field_takes_count($meta)) {
+            mtrace("  AsyncWatch: {$label}'s parts-done profile field '{$rule->partsfield}' isn't a text input or text area field — skipping parts sync.");
+            return [null, []];
+        }
+        return [$fieldid, helper::bulk_get_profile_field_data($fieldid, $userids)];
+    }
+
+    /**
+     * Write one learner's completed-parts count to the parts-done field,
+     * only if it differs from what's already there.
+     */
+    private function sync_parts_field(
+        int $fieldid, array $data, int $userid, int $done, string $shortname, string $label
+    ): void {
+        $value    = (string)$done;
+        $existing = $data[$userid] ?? null;
+        if (!$existing || $existing->data !== $value) {
+            helper::write_profile_field_value($userid, $fieldid, $value, $existing);
+            mtrace("  AsyncWatch: parts-done field '{$shortname}' → {$value} for user {$userid} ({$label})");
+        }
     }
 
     /**
@@ -446,6 +499,9 @@ class check_progress extends scheduled_task {
             }
         }
 
+        list($parts_fieldid, $parts_data) = $this->load_parts_field(
+            $rule, "global rule {$ruleid}", $userids);
+
         $breach_rows  = [];
         $warning_rows = [];
 
@@ -476,6 +532,11 @@ class check_progress extends scheduled_task {
                     helper::write_profile_field_value((int)$uid, $profile_fieldid, $label, $existing);
                     mtrace("  AsyncWatch: profile field '{$rule->profilefield}' → \"{$label}\" for user {$uid} (global rule {$ruleid})");
                 }
+            }
+
+            if ($parts_fieldid) {
+                $this->sync_parts_field($parts_fieldid, $parts_data, (int)$uid, $done,
+                    $rule->partsfield, "global rule {$ruleid}");
             }
 
             $this->maybe_send_global_learner_breach(

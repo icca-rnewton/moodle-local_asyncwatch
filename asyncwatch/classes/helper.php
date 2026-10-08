@@ -1427,20 +1427,25 @@ class helper {
      *        field shortname, if any — kept in the list even if it would
      *        otherwise be excluded, so editing an existing rule doesn't
      *        silently clear a working configuration out from under it.
+     * @param array $datatypes Profile field types to list — the status
+     *        field accepts text and dropdown, the parts-done field text
+     *        input and text area.
      * @return array shortname => "Field name (shortname)"
      */
     public static function get_profile_field_options(
-        bool $restrict_to_course_safe = false, ?string $currently_selected = null
+        bool $restrict_to_course_safe = false, ?string $currently_selected = null,
+        array $datatypes = ['text', 'menu']
     ): array {
         global $DB;
-        $where = "datatype IN ('text', 'menu')";
+        list($typesql, $params) = $DB->get_in_or_equal($datatypes);
+        $where = "datatype $typesql";
         if ($restrict_to_course_safe) {
             $where .= " AND locked = 0";
         }
         $fields = $DB->get_records_select(
             'user_info_field',
             $where,
-            null,
+            $params,
             'categoryid ASC, sortorder ASC',
             'id, shortname, name'
         );
@@ -1463,6 +1468,95 @@ class helper {
         }
 
         return $options;
+    }
+
+    /**
+     * Which rules already write to each profile field — for the "this
+     * field is already used by…" notice on the rule edit forms. Sharing a
+     * field between rules is allowed (it can be deliberate), so this only
+     * informs, it never blocks.
+     *
+     * @param int|null $courseid Viewing from a course rule form: rules in
+     *        this course are named, rules anywhere else (other courses,
+     *        cross-course) are only counted — a course manager shouldn't
+     *        see other courses' rule names. Null = cross-course form
+     *        (site-wide capability): everything is named.
+     * @param int $exclude_ruleid Course rule being edited, left out.
+     * @param int $exclude_globalruleid Cross-course rule being edited, left out.
+     * @return array shortname => string, HTML-safe (names go through
+     *         format_string()), ready to insert as markup
+     */
+    public static function get_profile_field_usage(
+        ?int $courseid, int $exclude_ruleid = 0, int $exclude_globalruleid = 0
+    ): array {
+        global $DB;
+        $named = [];
+        $other = [];
+        $kinds = [
+            'profilefield' => get_string('fieldusage_kind_status', 'local_asyncwatch'),
+            'partsfield'   => get_string('fieldusage_kind_parts', 'local_asyncwatch'),
+        ];
+
+        $rules = $DB->get_records_select('asyncwatch_rules',
+            "profilefield <> '' OR partsfield <> ''", null, 'name ASC',
+            'id, courseid, name, profilefield, partsfield');
+        $coursenames = [];
+        if ($courseid === null && $rules) {
+            $cids = array_unique(array_map(function($r) { return (int)$r->courseid; }, $rules));
+            foreach ($DB->get_records_list('course', 'id', $cids, '', 'id, fullname') as $c) {
+                $coursenames[(int)$c->id] = format_string($c->fullname);
+            }
+        }
+        foreach ($rules as $r) {
+            if ((int)$r->id === $exclude_ruleid) continue;
+            foreach ($kinds as $col => $kind) {
+                $sn = $r->$col;
+                if ($sn === '' || $sn === null) continue;
+                if ($courseid !== null && (int)$r->courseid !== $courseid) {
+                    $other[$sn] = ($other[$sn] ?? 0) + 1;
+                    continue;
+                }
+                $a = (object)['name' => format_string($r->name), 'kind' => $kind,
+                    'course' => $coursenames[(int)$r->courseid] ?? ''];
+                $named[$sn][] = get_string($courseid === null ? 'fieldusage_rule_incourse' : 'fieldusage_rule', 'local_asyncwatch', $a);
+            }
+        }
+
+        $grules = $DB->get_records_select('asyncwatch_global_rules',
+            "profilefield <> '' OR partsfield <> ''", null, 'name ASC',
+            'id, name, profilefield, partsfield');
+        foreach ($grules as $r) {
+            if ((int)$r->id === $exclude_globalruleid) continue;
+            foreach ($kinds as $col => $kind) {
+                $sn = $r->$col;
+                if ($sn === '' || $sn === null) continue;
+                if ($courseid !== null) {
+                    $other[$sn] = ($other[$sn] ?? 0) + 1;
+                    continue;
+                }
+                $named[$sn][] = get_string('fieldusage_globalrule', 'local_asyncwatch',
+                    (object)['name' => format_string($r->name), 'kind' => $kind]);
+            }
+        }
+
+        $out = [];
+        foreach (array_unique(array_merge(array_keys($named), array_keys($other))) as $sn) {
+            $bits = $named[$sn] ?? [];
+            if (!empty($other[$sn])) {
+                $bits[] = get_string('fieldusage_elsewhere', 'local_asyncwatch', $other[$sn]);
+            }
+            $out[$sn] = get_string('fieldusage_notice', 'local_asyncwatch', implode('; ', $bits));
+        }
+        return $out;
+    }
+
+    /**
+     * True if a profile field can receive a parts-done count — text input
+     * or text area only, since a dropdown would need every possible number
+     * as an option.
+     */
+    public static function profile_field_takes_count(\stdClass $meta): bool {
+        return in_array($meta->datatype, ['text', 'textarea'], true);
     }
 
     /**

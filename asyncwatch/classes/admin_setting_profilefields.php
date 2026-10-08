@@ -57,7 +57,7 @@ class admin_setting_profilefields extends \admin_setting {
 
     /**
      * @param mixed $data Posted checkbox array, e.g. ['shortname1' => '1'].
-     *              Only unlocked text/menu fields are ever actually stored
+     *              Only unlocked text/textarea/menu fields are ever actually stored
      *              — a locked or non-existent shortname slipping through
      *              (disabled inputs aren't submitted by the browser, but
      *              nothing stops a hand-crafted POST) is silently dropped
@@ -74,14 +74,16 @@ class admin_setting_profilefields extends \admin_setting {
     }
 
     /**
-     * Shortnames of every unlocked text/menu field — the only ones this
-     * setting is allowed to store as checked.
+     * Shortnames of every unlocked text/textarea/menu field — the only
+     * ones this setting is allowed to store as checked. Text area fields
+     * are only usable as a parts-done field, not a status field, but
+     * still need to be allowlistable for course rules to pick them.
      */
     private function get_eligible_shortnames(): array {
         global $DB;
         $rows = $DB->get_records_select(
             'user_info_field',
-            "datatype IN ('text', 'menu') AND locked = 0",
+            "datatype IN ('text', 'textarea', 'menu') AND locked = 0",
             null, '', 'shortname'
         );
         return array_column($rows, 'shortname');
@@ -95,7 +97,7 @@ class admin_setting_profilefields extends \admin_setting {
         $categories = $DB->get_records('user_info_category', null, 'sortorder ASC', 'id, name');
         $fields = $DB->get_records_select(
             'user_info_field',
-            "datatype IN ('text', 'menu')",
+            "datatype IN ('text', 'textarea', 'menu')",
             null, 'categoryid ASC, sortorder ASC',
             'id, shortname, name, locked, categoryid'
         );

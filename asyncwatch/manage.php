@@ -157,8 +157,10 @@ if ($tab === 'rules' && in_array($action, ['addrule', 'editrule'])) {
     }
 
     $current_profilefield = null;
+    $current_partsfield   = null;
     if ($action === 'editrule' && $id) {
         $current_profilefield = $DB->get_field('asyncwatch_rules', 'profilefield', ['id' => $id]) ?: null;
+        $current_partsfield   = $DB->get_field('asyncwatch_rules', 'partsfield', ['id' => $id]) ?: null;
     }
 
     // Additional staff recipients — course-wide overseers are shown for
@@ -212,6 +214,9 @@ if ($tab === 'rules' && in_array($action, ['addrule', 'editrule'])) {
         'ruleid'                   => $id,
         'total_parts'              => $total_parts,
         'profile_field_options'    => helper::get_profile_field_options(true, $current_profilefield),
+        // Same course allowlist as the status field, but text input / text area only.
+        'parts_field_options'      => helper::get_profile_field_options(true, $current_partsfield, ['text', 'textarea']),
+        'field_usage'              => helper::get_profile_field_usage($courseid, (int)$id),
         'group_options'            => $group_options,
         'cohort_options'           => $cohort_options,
         'overseer_names'           => $overseer_names,
@@ -250,6 +255,7 @@ if ($tab === 'rules' && in_array($action, ['addrule', 'editrule'])) {
             'notify_learner_warning'=> (int)($formdata->notify_learner_warning ?? 0),
             'notify_staff_warning'  => (int)($formdata->notify_staff_warning   ?? 0),
             'profilefield'          => trim($formdata->profilefield ?? ''),
+            'partsfield'            => trim($formdata->partsfield ?? ''),
         ];
         if ($id) {
             $record->id = $id;
@@ -304,6 +310,7 @@ if ($tab === 'rules' && in_array($action, ['addrule', 'editrule'])) {
             'warn_parts_style'       => $warn_parts_fields['warn_parts_style'],
             'warn_parts_value'       => $warn_parts_fields['warn_parts_value'],
             'profilefield'           => $rule->profilefield ?? '',
+            'partsfield'             => $rule->partsfield ?? '',
             'restrict_groupids'      => helper::get_rule_restrict_groupids($id),
             'restrict_cohortids'     => helper::get_rule_restrict_cohortids($id),
             'extra_recipient_ids'    => helper::get_rule_extra_recipient_ids($id),

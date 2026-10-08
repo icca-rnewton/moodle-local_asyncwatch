@@ -118,6 +118,8 @@ if (in_array($action, ['add', 'edit'])) {
         'courses_with_parts'       => $courses_with_parts,
         'cohorts'                  => $cohort_options,
         'profile_field_options'    => helper::get_profile_field_options(),
+        'parts_field_options'      => helper::get_profile_field_options(false, null, ['text', 'textarea']),
+        'field_usage'              => helper::get_profile_field_usage(null, 0, (int)$id),
         // Deliberately unrestricted — local/asyncwatch:manageglobal is
         // already a genuine site-wide capability, so there's no course/
         // site privilege gap for the allowlist above to close here.
@@ -145,6 +147,7 @@ if (in_array($action, ['add', 'edit'])) {
             'notify_learner_warning' => (int)($formdata->notify_learner_warning ?? 0),
             'notify_staff_warning'   => (int)($formdata->notify_staff_warning   ?? 0),
             'profilefield'           => trim($formdata->profilefield ?? ''),
+            'partsfield'             => trim($formdata->partsfield ?? ''),
         ];
         if ($id) {
             $record->id = $id;
@@ -199,6 +202,7 @@ if (in_array($action, ['add', 'edit'])) {
             'warn_parts_style'       => $warn_parts_fields['warn_parts_style'],
             'warn_parts_value'       => $warn_parts_fields['warn_parts_value'],
             'profilefield'           => $rule->profilefield ?? '',
+            'partsfield'             => $rule->partsfield ?? '',
             'extra_recipient_ids'    => helper::get_global_rule_extra_recipient_ids($id),
         ]);
     }

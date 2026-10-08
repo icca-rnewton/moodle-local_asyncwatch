@@ -57,6 +57,7 @@
         <FIELD NAME="notify_learner_warning" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="0"/>
         <FIELD NAME="notify_staff_warning" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="0"/>
         <FIELD NAME="profilefield" TYPE="char" LENGTH="100" NOTNULL="true" DEFAULT="" COMMENT="Shortname of a user profile custom field to sync this rule's status into; empty = disabled"/>
+        <FIELD NAME="partsfield" TYPE="char" LENGTH="100" NOTNULL="true" DEFAULT="" COMMENT="Shortname of a text-type user profile custom field to sync the learner's completed-parts count into; empty = disabled"/>
         <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"/>
         <FIELD NAME="timemodified" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"/>
       </FIELDS>
@@ -221,6 +222,7 @@
         <FIELD NAME="notify_learner_warning" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="0"/>
         <FIELD NAME="notify_staff_warning" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="0"/>
         <FIELD NAME="profilefield" TYPE="char" LENGTH="100" NOTNULL="true" DEFAULT="" COMMENT="Shortname of a user profile custom field to sync this rule's status into; empty = disabled"/>
+        <FIELD NAME="partsfield" TYPE="char" LENGTH="100" NOTNULL="true" DEFAULT="" COMMENT="Shortname of a text-type user profile custom field to sync the learner's completed-parts count into; empty = disabled"/>
         <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"/>
         <FIELD NAME="timemodified" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"/>
       </FIELDS>

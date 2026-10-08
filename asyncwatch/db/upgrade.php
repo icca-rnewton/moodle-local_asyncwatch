@@ -706,5 +706,24 @@ function xmldb_local_asyncwatch_upgrade($oldversion) {
         upgrade_plugin_savepoint(true, 2026072623, 'local', 'asyncwatch');
     }
 
+    if ($oldversion < 2026072625) {
+
+        // Parts-done profile field sync: a second, optional profile field
+        // per rule that receives the learner's completed-parts count
+        // (alongside the existing status field). Empty = disabled, so
+        // existing rules are unaffected. field_exists() keeps this safe to
+        // re-run if interrupted.
+        foreach (['asyncwatch_rules', 'asyncwatch_global_rules'] as $tablename) {
+            $table = new xmldb_table($tablename);
+            $field = new xmldb_field('partsfield', XMLDB_TYPE_CHAR, '100', null,
+                XMLDB_NOTNULL, null, '', 'profilefield');
+            if (!$dbman->field_exists($table, $field)) {
+                $dbman->add_field($table, $field);
+            }
+        }
+
+        upgrade_plugin_savepoint(true, 2026072625, 'local', 'asyncwatch');
+    }
+
     return true;
 }
